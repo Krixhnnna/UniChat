@@ -1,229 +1,255 @@
+// lib/screens/settings/settings_screen.dart
+import 'package:campus_crush/services/auth_service.dart';
+import 'package:campus_crush/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../models/user_model.dart';
-import '../../services/user_service.dart';
-import '../../services/auth_service.dart';
-import 'package:cloud_firestore/cloud_firestore.dart'; // For Timestamp
+import 'package:campus_crush/services/user_service.dart';
+import 'package:campus_crush/models/user_model.dart';
+import 'dart:math' as math;
+
 
 class SettingsScreen extends StatefulWidget {
-  final UserModel currentUser;
-
-  const SettingsScreen({Key? key, required this.currentUser}) : super(key: key);
-
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  _SettingsScreenState createState() => _SettingsScreenState();
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  late String _preferredGender;
-  late RangeValues _ageRange;
-  late TextEditingController _locationController;
-  bool _isLoading = false;
+  User? _currentUser;
+  bool _isLoadingUser = true;
 
   @override
   void initState() {
     super.initState();
-    _preferredGender = widget.currentUser.interestedIn ?? 'Everyone';
-    // Initialize age range with user's preferences if available, otherwise defaults
-    double minAge = 18.0;
-    double maxAge = 60.0;
-
-    // Fetch preferences from the current user's document if they exist
-    // This requires fetching the raw document as these fields are not in UserModel directly
-    // and were added as separate updates.
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      final userService = Provider.of<UserService>(context, listen: false);
-      final authService = Provider.of<AuthService>(context, listen: false);
-      final String? uid = authService.currentUser?.uid;
-
-      if (uid != null) {
-        DocumentSnapshot userDoc = await userService.usersCollection.doc(uid).get(); // Access public usersCollection
-        if (userDoc.exists) {
-          Map<String, dynamic>? userData = userDoc.data() as Map<String, dynamic>?;
-          if (userData != null) {
-            setState(() {
-              _preferredGender = userData['interestedIn'] ?? 'Everyone';
-              minAge = (userData['minAgePreference'] as int?)?.toDouble() ?? 18.0;
-              maxAge = (userData['maxAgePreference'] as int?)?.toDouble() ?? 60.0;
-              _ageRange = RangeValues(minAge.clamp(18.0, 60.0), maxAge.clamp(18.0, 60.0));
-              _locationController.text = userData['locationPreference'] ?? '';
-            });
-          }
-        }
-      }
-    });
-
-    _ageRange = RangeValues(minAge.clamp(18.0, 60.0), maxAge.clamp(18.0, 60.0));
-    _locationController = TextEditingController(text: widget.currentUser.location);
+    _fetchCurrentUserProfile();
   }
 
-  @override
-  void dispose() {
-    _locationController.dispose();
-    super.dispose();
-  }
+  Future<void> _fetchCurrentUserProfile() async {
+    final userService = Provider.of<UserService>(context, listen: false);
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final currentFirebaseUser = authService.currentUser;
 
-  Future<void> _savePreferences() async {
-    setState(() {
-      _isLoading = true;
-    });
-
-    try {
-      final userService = Provider.of<UserService>(context, listen: false);
-      final authService = Provider.of<AuthService>(context, listen: false);
-      final String? uid = authService.currentUser?.uid;
-
-      if (uid != null) {
-        // Create an updated UserModel with new preferences
-        final updatedUser = UserModel(
-          uid: widget.currentUser.uid,
-          email: widget.currentUser.email,
-          name: widget.currentUser.name,
-          bio: widget.currentUser.bio,
-          gender: widget.currentUser.gender,
-          interestedIn: _preferredGender, // Update interestedIn based on selection
-          age: widget.currentUser.age,
-          location: _locationController.text.trim().isNotEmpty ? _locationController.text.trim() : null,
-          photoUrls: widget.currentUser.photoUrls,
-          fcmToken: widget.currentUser.fcmToken,
-          blockedUsers: widget.currentUser.blockedUsers,
-          isOnline: widget.currentUser.isOnline,
-          lastActive: widget.currentUser.lastActive,
-          boostEndTime: widget.currentUser.boostEndTime,
-        );
-
-        // Save age range and location as separate fields for matching
-        Map<String, dynamic> preferenceUpdates = {
-          'interestedIn': _preferredGender,
-          'minAgePreference': _ageRange.start.round(),
-          'maxAgePreference': _ageRange.end.round(),
-          'locationPreference': _locationController.text.trim().isNotEmpty ? _locationController.text.trim() : null,
-        };
-
-        await userService.createUserProfile(updatedUser);
-        await userService.usersCollection.doc(uid).update(preferenceUpdates); // Access public usersCollection
-
+    if (currentFirebaseUser != null) {
+      try {
+        User? user = await userService.getUser(currentFirebaseUser.uid);
+        setState(() {
+          _currentUser = user;
+          _isLoadingUser = false;
+        });
+      } catch (e) {
+        print('Error fetching current user profile for SettingsScreen: $e');
+        setState(() {
+          _isLoadingUser = false;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Preferences saved successfully!')),
+          const SnackBar(content: Text('Failed to load profile data.')),
         );
-        Navigator.pop(context);
       }
-    } catch (e) {
-      print('Error saving preferences: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to save preferences: $e')),
-      );
-    } finally {
+    } else {
       setState(() {
-        _isLoading = false;
+        _isLoadingUser = false;
       });
+      Navigator.of(context).pushReplacementNamed('/login');
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final authService = Provider.of<AuthService>(context);
+    final double topContentPadding = MediaQuery.of(context).padding.top + AppBar().preferredSize.height + 16.0;
+
+
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Match Preferences'),
-        backgroundColor: Theme.of(context).primaryColor,
-        elevation: 0,
-      ),
-      body: _isLoading
-          ? Center(child: CircularProgressIndicator())
+      appBar: null, // Removed AppBar from SettingsScreen to prevent conflicts
+      backgroundColor: Colors.transparent, // Set to transparent to see HomeScreen's background
+      body: _isLoadingUser
+          ? Center(
+              child: CircularProgressIndicator(
+                color: AppTheme.lightTheme.primaryColor,
+              ),
+            )
           : SingleChildScrollView(
-              padding: const EdgeInsets.all(16.0),
+              padding: EdgeInsets.only(top: topContentPadding, bottom: 16.0), // Padding to push content below the HomeScreens's AppBar
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'Looking For',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Theme.of(context).primaryColor),
-                  ),
-                  SizedBox(height: 10),
-                  DropdownButtonFormField<String>(
-                    value: _preferredGender,
-                    decoration: InputDecoration(
-                      labelText: 'Interested In',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 15, vertical: 10),
-                    ),
-                    items: <String>['Male', 'Female', 'Everyone']
-                        .map((String value) {
-                      return DropdownMenuItem<String>(
-                        value: value,
-                        child: Text(value),
-                      );
-                    }).toList(),
-                    onChanged: (String? newValue) {
-                      setState(() {
-                        _preferredGender = newValue!;
-                      });
-                    },
-                  ),
-                  SizedBox(height: 20),
-                  Text(
-                    'Age Range',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Theme.of(context).primaryColor),
-                  ),
-                  SizedBox(height: 10),
-                  RangeSlider(
-                    values: _ageRange,
-                    min: 18,
-                    max: 60,
-                    divisions: 42,
-                    labels: RangeLabels(
-                      _ageRange.start.round().toString(),
-                      _ageRange.end.round().toString(),
-                    ),
-                    onChanged: (RangeValues newValues) {
-                      setState(() {
-                        _ageRange = newValues;
-                      });
-                    },
-                  ),
+                  // This title will now scroll with the content
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('Min Age: ${_ageRange.start.round()}'),
-                        Text('Max Age: ${_ageRange.end.round()}'),
-                      ],
+                    padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 10.0),
+                    child: Text(
+                      'Settings',
+                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
                     ),
                   ),
-                  SizedBox(height: 20),
-                  Text(
-                    'Location Preference',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Theme.of(context).primaryColor),
-                  ),
-                  SizedBox(height: 10),
-                  TextFormField(
-                    controller: _locationController,
-                    decoration: InputDecoration(
-                      labelText: 'Location (e.g., City)',
-                      hintText: 'Enter city or region',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 15, vertical: 10),
-                    ),
-                  ),
-                  SizedBox(height: 30),
-                  Center(
-                    child: ElevatedButton(
-                      onPressed: _savePreferences,
-                      child: Text('Save Preferences'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Theme.of(context).primaryColor,
-                        foregroundColor: Colors.white,
-                        minimumSize: Size(double.infinity, 50),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
+                  const SizedBox(height: 10),
+                  if (_currentUser != null)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 10.0),
+                      child: AspectRatio(
+                        aspectRatio: 0.8,
+                        child: _buildProfileCard(context, _currentUser!),
                       ),
-                    ),
+                    )
+                  else
+                    const SizedBox.shrink(),
+                  const SizedBox(height: 20),
+
+                  ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                    leading: const Icon(Icons.person, color: Colors.white, size: 28),
+                    title: const Text('Edit Profile', style: TextStyle(color: Colors.white, fontSize: 18)),
+                    onTap: () async {
+                      final currentFirebaseUser = authService.currentUser;
+                      if (currentFirebaseUser != null) {
+                        final userService = Provider.of<UserService>(context, listen: false);
+                        final currentUserModel = await userService.getUser(currentFirebaseUser.uid);
+                        if (currentUserModel != null) {
+                          await Navigator.pushNamed(context, '/edit_profile', arguments: currentUserModel);
+                          _fetchCurrentUserProfile();
+                        } else {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Failed to load profile data.')),
+                          );
+                        }
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('You need to be logged in to edit your profile.')),
+                        );
+                        Navigator.of(context).pushReplacementNamed('/login');
+                      }
+                    },
+                  ),
+                  ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                    leading: const Icon(Icons.notifications, color: Colors.white, size: 28),
+                    title: const Text('Notification Settings', style: TextStyle(color: Colors.white, fontSize: 18)),
+                    onTap: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Notification Settings (Coming Soon!)')),
+                      );
+                    },
+                  ),
+                  ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                    leading: const Icon(Icons.security, color: Colors.white, size: 28),
+                    title: const Text('Privacy Policy', style: TextStyle(color: Colors.white, fontSize: 18)),
+                    onTap: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Privacy Policy (Coming Soon!)')),
+                      );
+                    },
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                    child: Divider(color: Colors.white54, thickness: 1.5),
+                  ),
+                  ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                    leading: const Icon(Icons.logout, color: Colors.red, size: 28),
+                    title: const Text('Logout', style: TextStyle(color: Colors.white, fontSize: 18)),
+                    onTap: () async {
+                      await authService.signOut();
+                      Navigator.of(context).pushReplacementNamed('/login');
+                    },
                   ),
                 ],
               ),
             ),
+    );
+  }
+
+  Widget _buildProfileCard(BuildContext context, User user) {
+    final String imageUrl = user.profilePhotos.isNotEmpty
+        ? user.profilePhotos[0]
+        : 'assets/default_avatar.png';
+
+    return Card(
+      elevation: 8.0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.network(
+            imageUrl,
+            fit: BoxFit.cover,
+            loadingBuilder: (context, child, loadingProgress) {
+              if (loadingProgress == null) return child;
+              return Center(
+                child: CircularProgressIndicator(
+                  value: loadingProgress.expectedTotalBytes != null
+                      ? loadingProgress.cumulativeBytesLoaded / loadingProgress.expectedTotalBytes!
+                      : null,
+                ),
+              );
+            },
+            errorBuilder: (context, error, stackTrace) => Image.asset('assets/default_avatar.png', fit: BoxFit.cover),
+          ),
+          Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Colors.transparent, Colors.black.withOpacity(0.7)],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              ),
+            ),
+          ),
+          Positioned(
+            bottom: 20,
+            left: 20,
+            right: 20,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${user.displayName ?? 'N/A'}, ${user.age ?? ''}',
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontFamily: 'Poppins',
+                      ),
+                ),
+                if (user.college != null && user.college!.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4.0),
+                    child: Text(
+                      user.college!,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            color: Colors.white.withOpacity(0.9),
+                            fontStyle: FontStyle.italic,
+                          ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                if (user.gender != null && user.gender!.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4.0),
+                    child: Text(
+                      user.gender!,
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            color: Colors.white.withOpacity(0.8),
+                          ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                const SizedBox(height: 5),
+                Text(
+                  user.bio ?? 'No bio available.',
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                        color: Colors.white.withOpacity(0.9),
+                        fontFamily: 'IndieFlower',
+                      ),
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

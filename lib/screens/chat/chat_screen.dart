@@ -1,321 +1,395 @@
+// lib/screens/chat/chat_screen.dart
+import 'package:campus_crush/models/message_model.dart';
+import 'package:campus_crush/models/user_model.dart';
+import 'package:campus_crush/services/auth_service.dart';
+import 'package:campus_crush/services/database_service.dart';
+import 'package:campus_crush/services/user_service.dart';
+import 'package:campus_crush/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../models/user_model.dart';
-import '../../models/message_model.dart';
-import '../../services/database_service.dart';
-import '../../services/user_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:intl/intl.dart';
 
 class ChatScreen extends StatefulWidget {
-  final UserModel matchedUser;
-  final String currentUserId;
-
-  const ChatScreen({
-    Key? key,
-    required this.matchedUser,
-    required this.currentUserId,
-  }) : super(key: key);
-
   @override
-  State<ChatScreen> createState() => _ChatScreenState();
+  _ChatScreenState createState() => _ChatScreenState();
 }
 
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  UserModel? _currentUserProfile;
+  User? _currentUser;
   bool _isTyping = false;
+  bool _otherUserIsTyping = false;
+  late User _matchedUser;
+  bool _matchedUserIsOnline = false;
+  Timestamp? _matchedUserLastActive;
 
   @override
   void initState() {
     super.initState();
-    _fetchCurrentUserProfile();
-    _messageController.addListener(_onMessageControllerChanged);
-  }
-
-  Future<void> _fetchCurrentUserProfile() async {
-    final userService = Provider.of<UserService>(context, listen: false);
-    final user = await userService.getUserProfile(widget.currentUserId);
-    setState(() {
-      _currentUserProfile = user;
-    });
-  }
-
-  void _onMessageControllerChanged() {
-    final databaseService = Provider.of<DatabaseService>(context, listen: false);
-    bool currentlyTyping = _messageController.text.trim().isNotEmpty;
-
-    if (currentlyTyping != _isTyping) {
-      setState(() {
-        _isTyping = currentlyTyping;
-      });
-      databaseService.setTypingStatus(widget.currentUserId, widget.matchedUser.uid, _isTyping);
-    }
+    _messageController.addListener(_onMessageInputChanged);
   }
 
   @override
-  void dispose() {
-    _messageController.removeListener(_onMessageControllerChanged);
-    _messageController.dispose();
-    _scrollController.dispose();
-    Provider.of<DatabaseService>(context, listen: false).setTypingStatus(
-      widget.currentUserId,
-      widget.matchedUser.uid,
-      false,
-    );
-    super.dispose();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final args = ModalRoute.of(context)?.settings.arguments;
+    if (args is User) {
+      _matchedUser = args;
+      _fetchCurrentUserAndListenToMatchedUserStatus();
+      _markMessagesAsRead(); // Mark messages as read when entering chat
+    } else {
+      Navigator.pop(context);
+    }
+  }
+
+  Future<void> _fetchCurrentUserAndListenToMatchedUserStatus() async {
+    final userService = Provider.of<UserService>(context, listen: false);
+    final currentUserId = userService.getCurrentUserId();
+    if (currentUserId != null) {
+      _currentUser = await userService.getUser(currentUserId);
+      setState(() {});
+      _listenToOtherUserTypingStatus();
+      _listenToMatchedUserOnlineStatus();
+    }
+  }
+
+  // New method to mark messages as read
+  void _markMessagesAsRead() {
+    final databaseService = Provider.of<DatabaseService>(context, listen: false);
+    final currentUserId = _currentUser?.uid;
+    if (currentUserId != null && _matchedUser.uid != null) {
+      databaseService.markMessagesAsRead(currentUserId, _matchedUser.uid!);
+    }
+  }
+
+  void _onMessageInputChanged() {
+    final databaseService = Provider.of<DatabaseService>(context, listen: false);
+    final currentUserId = _currentUser?.uid;
+
+    if (currentUserId != null && _matchedUser.uid != null) {
+      bool newTypingStatus = _messageController.text.isNotEmpty;
+      if (_isTyping != newTypingStatus) {
+        setState(() {
+          _isTyping = newTypingStatus;
+        });
+        databaseService.setTypingStatus(currentUserId, _matchedUser.uid!, newTypingStatus);
+      }
+    }
+  }
+
+  void _listenToOtherUserTypingStatus() {
+    final databaseService = Provider.of<DatabaseService>(context, listen: false);
+    final currentUserId = _currentUser?.uid;
+    if (currentUserId != null && _matchedUser.uid != null) {
+      databaseService.getTypingStatus(currentUserId, _matchedUser.uid!).listen((isTyping) {
+        setState(() {
+          _otherUserIsTyping = isTyping;
+        });
+      });
+    }
+  }
+
+  void _listenToMatchedUserOnlineStatus() {
+    final userService = Provider.of<UserService>(context, listen: false);
+    if (_matchedUser.uid != null) {
+      userService.getUserStream(_matchedUser.uid!).listen((user) {
+        if (user != null) {
+          setState(() {
+            _matchedUserIsOnline = user.isOnline ?? false;
+            _matchedUserLastActive = user.lastActive;
+          });
+        }
+      });
+    }
   }
 
   void _sendMessage() async {
     if (_messageController.text.trim().isEmpty) return;
 
     final databaseService = Provider.of<DatabaseService>(context, listen: false);
-    try {
-      await databaseService.sendMessage(
-        widget.currentUserId,
-        widget.matchedUser.uid,
-        _messageController.text.trim(),
-      );
-      _messageController.clear();
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scrollController.hasClients) {
-          _scrollController.animateTo(
-            0.0,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
-        }
-      });
-    } catch (e) {
-      print('Error sending message: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to send message: $e')),
-      );
-    }
-  }
+    final currentUserId = _currentUser?.uid;
 
-  String _formatLastActive(Timestamp? lastActive) {
-    if (lastActive == null) return 'Offline';
-    final now = DateTime.now();
-    final lastActiveDate = lastActive.toDate();
-    final difference = now.difference(lastActiveDate);
-
-    if (difference.inMinutes < 1) {
-      return 'Online';
-    } else if (difference.inHours < 1) {
-      return '${difference.inMinutes}m ago';
-    } else if (difference.inDays < 1) {
-      return '${difference.inHours}h ago';
-    } else if (difference.inDays < 7) {
-      return '${difference.inDays}d ago';
-    } else {
-      return DateFormat('MMM d').format(lastActiveDate);
+    if (currentUserId != null && _matchedUser.uid != null) {
+      try {
+        await databaseService.sendMessage(
+          currentUserId,
+          _matchedUser.uid!,
+          _messageController.text.trim(),
+        );
+        _messageController.clear();
+        _scrollController.animateTo(
+          0.0,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      } catch (e) {
+        print('Error sending message: $e');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to send message. Please try again.')),
+        );
+      }
     }
   }
 
   @override
+  void dispose() {
+    _messageController.removeListener(_onMessageInputChanged);
+    _messageController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    if (!(_matchedUser is User)) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Chat')),
+        body: const Center(child: Text('Error: Matched user data not found.')),
+      );
+    }
+
     final databaseService = Provider.of<DatabaseService>(context);
-    final userService = Provider.of<UserService>(context);
+    final currentUserId = _currentUser?.uid;
 
     return Scaffold(
       appBar: AppBar(
+        backgroundColor: AppTheme.lightTheme.primaryColor,
         title: Row(
           children: [
             CircleAvatar(
+              backgroundImage: NetworkImage(
+                _matchedUser.profilePhotos.isNotEmpty
+                    ? _matchedUser.profilePhotos[0]
+                    : 'assets/default_avatar.png',
+              ),
               radius: 20,
-              backgroundImage: widget.matchedUser.photoUrls != null && widget.matchedUser.photoUrls!.isNotEmpty
-                  ? NetworkImage(widget.matchedUser.photoUrls!.first) as ImageProvider
-                  : AssetImage('assets/default_avatar.png'),
-              backgroundColor: Colors.grey[200],
             ),
-            SizedBox(width: 10),
+            const SizedBox(width: 10),
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(widget.matchedUser.name),
-                StreamBuilder<UserModel?>(
-                  stream: userService.getUserProfile(widget.matchedUser.uid).asStream(),
-                  builder: (context, userSnapshot) {
-                    final matchedUserLive = userSnapshot.data;
-                    return StreamBuilder<bool>(
-                      stream: databaseService.getTypingStatus(widget.currentUserId, widget.matchedUser.uid),
-                      builder: (context, typingSnapshot) {
-                        final isOtherUserTyping = typingSnapshot.hasData && typingSnapshot.data == true;
-
-                        if (isOtherUserTyping) {
-                          return Text(
-                            'Typing...',
-                            style: TextStyle(fontSize: 12, color: Colors.white70),
-                          );
-                        } else if (matchedUserLive != null) {
-                          String statusText = matchedUserLive.isOnline == true
-                              ? 'Online'
-                              : _formatLastActive(matchedUserLive.lastActive);
-                          return Text(
-                            statusText,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: matchedUserLive.isOnline == true ? Colors.lightGreenAccent : Colors.white70,
-                            ),
-                          );
-                        }
-                        return SizedBox.shrink();
-                      },
-                    );
-                  },
+                Text(
+                  _matchedUser.displayName ?? 'Unknown User',
+                  style: const TextStyle(color: Colors.white, fontSize: 18),
                 ),
+                if (_otherUserIsTyping)
+                  const Text(
+                    'typing...',
+                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                  )
+                else if (_matchedUserIsOnline)
+                  const Text(
+                    'Online',
+                    style: TextStyle(color: Colors.greenAccent, fontSize: 12),
+                  )
+                else if (_matchedUserLastActive != null)
+                  Text(
+                    'Last seen ${_formatLastActive(_matchedUserLastActive!.toDate())}',
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
               ],
             ),
           ],
         ),
-        backgroundColor: Theme.of(context).primaryColor,
-        elevation: 0,
       ),
       body: Column(
         children: [
           Expanded(
-            child: StreamBuilder<List<Message>>(
-              stream: databaseService.getMessages(widget.currentUserId, widget.matchedUser.uid),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return Center(child: CircularProgressIndicator());
-                }
-                if (snapshot.hasError) {
-                  print('Error fetching chat messages: ${snapshot.error}');
-                  return Center(child: Text('Error loading messages: ${snapshot.error}'));
-                }
-                if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                  return Center(child: Text('Say hello!', style: TextStyle(color: Colors.grey[600])));
-                }
+            child: currentUserId == null
+                ? Center(
+                    child: CircularProgressIndicator(
+                      color: AppTheme.lightTheme.primaryColor,
+                    ),
+                  )
+                : StreamBuilder<List<Message>>(
+                    stream: databaseService.getMessages(currentUserId, _matchedUser.uid!),
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return Center(
+                          child: CircularProgressIndicator(
+                            color: AppTheme.lightTheme.primaryColor,
+                          ),
+                        );
+                      }
+                      if (snapshot.hasError) {
+                        print('Chat Stream Error: ${snapshot.error}');
+                        return const Center(child: Text('Error loading messages.'));
+                      }
+                      if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                        return Center(
+                          child: Text(
+                            'Say hello to ${_matchedUser.displayName ?? 'your match'}!',
+                            style: Theme.of(context).textTheme.titleMedium?.copyWith(color: Colors.grey),
+                          ),
+                        );
+                      }
 
-                final messages = snapshot.data!;
+                      final messages = snapshot.data!;
+                      return ListView.builder(
+                        controller: _scrollController,
+                        reverse: true,
+                        padding: const EdgeInsets.all(10),
+                        itemCount: messages.length,
+                        itemBuilder: (context, index) {
+                          final message = messages[index];
+                          final bool isMe = message.senderId == currentUserId;
 
-                return AnimatedSwitcher( // NEW: AnimatedSwitcher for smooth message list updates
-                  duration: const Duration(milliseconds: 300),
-                  child: ListView.builder(
-                    key: ValueKey(messages.length), // Key to trigger animation on list change
-                    controller: _scrollController,
-                    reverse: true,
-                    padding: const EdgeInsets.all(8.0),
-                    itemCount: messages.length,
-                    itemBuilder: (context, index) {
-                      final message = messages[index];
-                      final isMe = message.senderId == widget.currentUserId;
-                      final displayAvatar = isMe
-                          ? (_currentUserProfile?.photoUrls != null && _currentUserProfile!.photoUrls!.isNotEmpty
-                              ? NetworkImage(_currentUserProfile!.photoUrls!.first)
-                              : AssetImage('assets/default_avatar.png'))
-                          : (widget.matchedUser.photoUrls != null && widget.matchedUser.photoUrls!.isNotEmpty
-                              ? NetworkImage(widget.matchedUser.photoUrls!.first)
-                              : AssetImage('assets/default_avatar.png'));
+                          bool showDateSeparator = false;
+                          if (index == messages.length - 1) {
+                            showDateSeparator = true;
+                          } else {
+                            final previousMessage = messages[index + 1];
+                            final currentDate = message.timestamp.toDate();
+                            final previousDate = previousMessage.timestamp.toDate();
+                            if (currentDate.day != previousDate.day ||
+                                currentDate.month != previousDate.month ||
+                                currentDate.year != previousDate.year) {
+                              showDateSeparator = true;
+                            }
+                          }
 
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4.0),
-                        child: Row(
-                          mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            if (!isMe)
-                              CircleAvatar(
-                                radius: 16,
-                                backgroundImage: displayAvatar as ImageProvider,
-                                backgroundColor: Colors.grey[200],
-                              ),
-                            SizedBox(width: 8),
-                            Flexible(
-                              child: Column(
-                                crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                                children: [
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(vertical: 10.0, horizontal: 15.0),
-                                    decoration: BoxDecoration(
-                                      color: isMe ? Theme.of(context).primaryColor : Colors.grey[300],
-                                      borderRadius: BorderRadius.only(
-                                        topLeft: Radius.circular(isMe ? 15 : 0),
-                                        topRight: Radius.circular(isMe ? 0 : 15),
-                                        bottomLeft: Radius.circular(15),
-                                        bottomRight: Radius.circular(15),
-                                      ),
-                                    ),
-                                    child: Text(
-                                      message.messageContent,
-                                      style: TextStyle(
-                                        color: isMe ? Colors.white : Colors.black,
-                                        fontSize: 16,
-                                      ),
-                                    ),
+                          return Column(
+                            children: [
+                              if (showDateSeparator)
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 10.0),
+                                  child: Text(
+                                    _formatDate(message.timestamp.toDate()),
+                                    style: const TextStyle(color: Colors.grey, fontSize: 12),
                                   ),
-                                  SizedBox(height: 4),
-                                  Text(
-                                    DateFormat('hh:mm a').format(message.timestamp.toDate()),
-                                    style: TextStyle(
-                                      color: Colors.grey[500],
-                                      fontSize: 10,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            SizedBox(width: 8),
-                            if (isMe)
-                              CircleAvatar(
-                                radius: 16,
-                                backgroundImage: displayAvatar as ImageProvider,
-                                backgroundColor: Colors.grey[200],
-                              ),
-                          ],
-                        ),
+                                ),
+                              _buildMessageBubble(message, isMe),
+                            ],
+                          );
+                        },
                       );
                     },
                   ),
-                );
-              },
-            ),
           ),
-          Container(
-            padding: const EdgeInsets.all(8.0),
-            decoration: BoxDecoration(
-              color: Theme.of(context).cardColor,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
-                  blurRadius: 5,
-                  offset: Offset(0, -2),
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _messageController,
-                    decoration: InputDecoration(
-                      hintText: 'Type a message...',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(25.0),
-                        borderSide: BorderSide.none,
-                      ),
-                      filled: true,
-                      fillColor: Colors.grey[200],
-                      contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                    ),
-                    onSubmitted: (value) => _sendMessage(),
-                  ),
-                ),
-                SizedBox(width: 8),
-                FloatingActionButton(
-                  onPressed: _sendMessage,
-                  backgroundColor: Theme.of(context).primaryColor,
-                  mini: true,
-                  child: Icon(Icons.send, color: Colors.white),
-                ),
-              ],
-            ),
+          SafeArea(
+            child: _buildMessageInput(),
           ),
         ],
       ),
     );
+  }
+
+  Widget _buildMessageBubble(Message message, bool isMe) {
+    return Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 8.0),
+        padding: const EdgeInsets.symmetric(vertical: 10.0, horizontal: 15.0),
+        decoration: BoxDecoration(
+          color: isMe ? AppTheme.lightTheme.primaryColor : Colors.grey[300],
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(isMe ? 15 : 0),
+            topRight: Radius.circular(isMe ? 0 : 15),
+            bottomLeft: const Radius.circular(15),
+            bottomRight: const Radius.circular(15),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.1),
+              blurRadius: 3,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          children: [
+            Text(
+              message.messageContent,
+              style: TextStyle(
+                color: isMe ? Colors.white : Colors.black87,
+                fontSize: 16,
+                fontFamily: 'Poppins',
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _formatTime(message.timestamp.toDate()),
+              style: TextStyle(
+                color: isMe ? Colors.white70 : Colors.black54,
+                fontSize: 10,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMessageInput() {
+    return Padding(
+      padding: const EdgeInsets.all(8.0),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _messageController,
+              decoration: InputDecoration(
+                hintText: 'Type a message...',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(25.0),
+                  borderSide: BorderSide.none,
+                ),
+                filled: true,
+                fillColor: Colors.grey[200],
+                contentPadding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 10.0),
+              ),
+              maxLines: null,
+              keyboardType: TextInputType.multiline,
+            ),
+          ),
+          const SizedBox(width: 8),
+          FloatingActionButton(
+            onPressed: _sendMessage,
+            backgroundColor: AppTheme.lightTheme.primaryColor,
+            elevation: 0,
+            mini: true,
+            child: const Icon(Icons.send, color: Colors.white),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatTime(DateTime dateTime) {
+    return '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
+  }
+
+  String _formatDate(DateTime dateTime) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = DateTime(now.year, now.month, now.day - 1);
+    final messageDate = DateTime(dateTime.year, dateTime.month, dateTime.day);
+
+    if (messageDate == today) {
+      return 'Today';
+    } else if (messageDate == yesterday) {
+      return 'Yesterday';
+    } else {
+      return '${dateTime.day}/${dateTime.month}/${dateTime.year}';
+    }
+  }
+
+  String _formatLastActive(DateTime lastActive) {
+    final now = DateTime.now();
+    final difference = now.difference(lastActive);
+
+    if (difference.inMinutes < 1) {
+      return 'just now';
+    } else if (difference.inMinutes < 60) {
+      return '${difference.inMinutes} min ago';
+    } else if (difference.inHours < 24) {
+      return '${difference.inHours} hr ago';
+    } else if (difference.inDays < 7) {
+      return '${difference.inDays} days ago';
+    } else {
+      return '${lastActive.day}/${lastActive.month}/${lastActive.year}';
+    }
   }
 }
