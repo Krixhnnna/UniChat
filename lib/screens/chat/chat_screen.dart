@@ -408,6 +408,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onLongPress: () => _showMessageOptions(message),
       child: Align(
         alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
