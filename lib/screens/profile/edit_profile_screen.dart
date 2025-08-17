@@ -10,6 +10,8 @@ import 'package:campus_crush/widgets/animated_background.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'dart:io';
+// We are no longer using the 'image' package to avoid decoding errors.
+// import 'package:image/image.dart' as img; 
 
 
 class EditProfileScreen extends StatefulWidget {
@@ -57,9 +59,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     super.dispose();
   }
 
+  // SIMPLIFIED AND MORE ROBUST _pickImage METHOD
   Future<void> _pickImage() async {
     try {
-      final XFile? image = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
+      // Pick an image and use image_picker's built-in compression.
+      final XFile? image = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
 
       if (image != null) {
         setState(() {
@@ -67,9 +71,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         });
 
         String fileExtension = image.path.split('.').last;
-        String fileName = '${DateTime.now().millisecondsSinceEpoch}.${fileExtension}';
+        String fileName = '${DateTime.now().millisecondsSinceEpoch}.$fileExtension';
         Reference storageRef = FirebaseStorage.instance.ref().child('profile_photos/${widget.currentUser.uid}/$fileName');
 
+        // Upload the file directly from its path.
         UploadTask uploadTask = storageRef.putFile(File(image.path));
         TaskSnapshot snapshot = await uploadTask;
         String downloadUrl = await snapshot.ref.getDownloadURL();
@@ -233,6 +238,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           borderSide: const BorderSide(color: Colors.white),
                           borderRadius: BorderRadius.circular(12),
                         ),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.1),
                       ),
                       style: const TextStyle(color: Colors.white),
                       maxLines: 3,
@@ -255,6 +262,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           borderSide: const BorderSide(color: Colors.white),
                           borderRadius: BorderRadius.circular(12),
                         ),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.1),
                       ),
                       keyboardType: TextInputType.number,
                       inputFormatters: <TextInputFormatter>[
@@ -284,11 +293,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           borderSide: const BorderSide(color: Colors.white),
                           borderRadius: BorderRadius.circular(12),
                         ),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.1),
                       ),
                       hint: const Text('Select Gender', style: TextStyle(color: Colors.white54)),
                       dropdownColor: Colors.black.withOpacity(0.8),
                       style: const TextStyle(color: Colors.white),
-                      items: const <String>['Male', 'Female'] // Removed Non-binary
+                      items: const <String>['Male', 'Female', 'Non-binary']
                           .map<DropdownMenuItem<String>>((String value) {
                         return DropdownMenuItem<String>(
                           value: value,
@@ -319,6 +330,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           borderSide: const BorderSide(color: Colors.white),
                           borderRadius: BorderRadius.circular(12),
                         ),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.1),
                       ),
                       hint: const Text('Select Preference', style: TextStyle(color: Colors.white54)),
                       dropdownColor: Colors.black.withOpacity(0.8),
@@ -354,7 +367,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     ElevatedButton.icon(
                       onPressed: (_isSaving || _isUploading) ? null : _pickImage,
                       icon: const Icon(Icons.camera_alt, color: Colors.white),
-                      label: const Text('Upload Profile Photos', style: TextStyle(color: Colors.white)),
+                      label: const Text('Upload Profile Photo', style: TextStyle(color: Colors.white)),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppTheme.lightTheme.primaryColor,
                         padding: const EdgeInsets.symmetric(vertical: 15),
@@ -397,11 +410,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       CircularProgressIndicator(color: Colors.white),
                       SizedBox(height: 20),
                       Text(
-                        'It may take a few seconds',
+                        'Optimizing photo...',
                         style: TextStyle(color: Colors.white70, fontSize: 16),
                       ),
                       Text(
-                        'Uploading photo...',
+                        'Uploading...',
                         style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
                       ),
                     ],

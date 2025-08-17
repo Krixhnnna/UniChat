@@ -23,7 +23,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
   String? _selectedGender;
   bool _isLoading = false;
-  bool _isPasswordVisible = false; // New state variable for password visibility
+  bool _isPasswordVisible = false;
 
 
   @override
@@ -48,67 +48,47 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
       final authService = Provider.of<AuthService>(context, listen: false);
       final userService = Provider.of<UserService>(context, listen: false);
-
-      // Determine college and display name based on email domain
-      String collegeName;
-      String displayName;
       final email = _emailController.text.trim();
-
-      if (email.endsWith('@lpu.in') || email.endsWith('@lpunetwork.edu.ph')) {
-        collegeName = 'Lovely Professional University';
-        final namePart = email.split('@')[0];
-        final cleanedNamePart = namePart.replaceAll(RegExp(r'[0-9]'), '');
-        final nameSegments = cleanedNamePart.split('.');
-        
-        if (nameSegments.length >= 2) {
-          displayName = nameSegments.map((s) {
-            if (s.isEmpty) return '';
-            return s[0].toUpperCase() + s.substring(1);
-          }).join(' ');
-        } else if (nameSegments.isNotEmpty) {
-          displayName = nameSegments[0][0].toUpperCase() + nameSegments[0].substring(1);
-        }
-        else {
-          displayName = '';
-        }
-      } else {
-        collegeName = '';
-        displayName = '';
-      }
-
+      final password = _passwordController.text.trim();
 
       try {
-        firebase_auth.UserCredential userCredential = await firebase_auth.FirebaseAuth.instance.createUserWithEmailAndPassword(
-          email: email,
-          password: _passwordController.text.trim(),
-        );
-
-        String? uid = userCredential.user?.uid;
+        String? uid = await authService.signUpWithEmailAndPassword(email, password);
 
         if (uid != null) {
-          User newUser = User(
+          String collegeName;
+          String displayName;
+          if (email.endsWith('@lpu.in') || email.endsWith('@lpunetwork.edu.ph')) {
+            collegeName = 'Lovely Professional University';
+            final namePart = email.split('@')[0];
+            final cleanedNamePart = namePart.replaceAll(RegExp(r'[0-9]'), '');
+            final nameSegments = cleanedNamePart.split('.');
+            
+            if (nameSegments.length >= 2) {
+              displayName = nameSegments.map((s) {
+                if (s.isEmpty) return '';
+                return s[0].toUpperCase() + s.substring(1);
+              }).join(' ');
+            } else if (nameSegments.isNotEmpty) {
+              displayName = nameSegments[0][0].toUpperCase() + nameSegments[0].substring(1);
+            } else {
+              displayName = '';
+            }
+          } else {
+            collegeName = '';
+            displayName = '';
+          }
+
+          // Updated User object creation
+          User updatedUser = User(
             uid: uid,
-            displayName: displayName,
             email: email,
+            displayName: displayName,
             college: collegeName,
             age: int.tryParse(_ageController.text.trim()),
             gender: _selectedGender,
-            profilePhotos: [],
-            bio: '',
-            likedUsers: [],
-            dislikedUsers: [],
-            matches: [],
-            blockedUsers: [],
-            reportedByUsers: [],
-            interests: [],
-            education: '',
-            prompts: {},
-            genderPreference: 'Both',
-            minAgePreference: 18,
-            maxAgePreference: 30,
           );
-
-          await userService.createUser(newUser);
+          
+          await userService.updateUser(updatedUser);
 
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Sign up successful! Please verify your email.')),
@@ -148,9 +128,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
     final double keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
     final double statusBarHeight = MediaQuery.of(context).padding.top;
     final double appBarVisualHeight = AppBar().preferredSize.height;
-
     final double fixedBottomBuffer = 60.0;
-
 
     return Scaffold(
       appBar: AppBar(
@@ -236,7 +214,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                       const SizedBox(height: 16),
                       TextFormField(
                         controller: _passwordController,
-                        obscureText: !_isPasswordVisible, // Use _isPasswordVisible state
+                        obscureText: !_isPasswordVisible,
                         decoration: InputDecoration(
                           labelText: 'Create Password',
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
@@ -251,7 +229,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                             borderSide: const BorderSide(color: Colors.white),
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          suffixIcon: IconButton( // Add suffixIcon for password toggle
+                          suffixIcon: IconButton(
                             icon: Icon(
                               _isPasswordVisible ? Icons.visibility : Icons.visibility_off,
                               color: const Color.fromARGB(179, 10, 10, 10),

@@ -14,7 +14,8 @@ class NotificationsScreen extends StatefulWidget {
 }
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
-  List<User> _pendingMatches = [];
+  // MODIFIED: State variable to hold both user and request type
+  Map<User, String> _pendingMatches = {};
   bool _isLoading = true;
 
   @override
@@ -24,47 +25,60 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Future<void> _fetchPendingMatches() async {
-    setState(() {
-      _isLoading = true;
-    });
+    if (mounted) setState(() { _isLoading = true; });
 
     final userService = Provider.of<UserService>(context, listen: false);
     try {
       final matches = await userService.getPendingMatches();
-      setState(() {
-        _pendingMatches = matches;
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _pendingMatches = matches;
+          _isLoading = false;
+        });
+      }
     } catch (e) {
-      print('Error fetching pending matches: $e');
-      setState(() {
-        _isLoading = false;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to load notifications.')),
-      );
+      if (mounted) setState(() { _isLoading = false; });
+      print("Error fetching pending matches: $e");
     }
   }
 
-  Future<void> _likeBackUser(User user) async {
+  // NEW METHOD: To handle friending back
+  Future<void> _friendBackUser(User user) async {
     final userService = Provider.of<UserService>(context, listen: false);
     try {
-      await userService.swipeUser(user.uid!, true);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('You matched with ${user.displayName}!')),
-      );
-      await _fetchPendingMatches();
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (context) => ChatScreen(), settings: RouteSettings(arguments: user)),
-      );
+      String? matchResult = await userService.swipeUser(user.uid, SwipeAction.friend);
+      if (matchResult != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('You are now friends with ${user.displayName}!')),
+        );
+        Navigator.pushReplacementNamed(context, '/chat', arguments: user);
+      }
+      _fetchPendingMatches(); // Refresh the list
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to match back. Please try again.')),
+        SnackBar(content: Text('Failed to accept request: $e')),
       );
     }
   }
 
+  // MODIFIED: To handle crushing back
+  Future<void> _crushBackUser(User user) async {
+    final userService = Provider.of<UserService>(context, listen: false);
+    try {
+      String? matchResult = await userService.swipeUser(user.uid, SwipeAction.crush);
+      if (matchResult != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('You matched with ${user.displayName}!')),
+        );
+        Navigator.pushReplacementNamed(context, '/chat', arguments: user);
+      }
+      _fetchPendingMatches(); // Refresh the list
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to accept request: $e')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -78,37 +92,29 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         child: _isLoading
             ? const Center(child: CircularProgressIndicator(color: Colors.white))
             : _pendingMatches.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(Icons.notifications_none, size: 80, color: Colors.white54),
-                        const SizedBox(height: 20),
-                        const Text(
-                          'You have no new notifications.',
-                          style: TextStyle(color: Colors.white, fontSize: 18),
-                        ),
-                        const SizedBox(height: 10),
-                        const Text(
-                          'Keep swiping to find new matches!',
-                          style: TextStyle(color: Colors.white70, fontSize: 16),
-                        ),
-                      ],
-                    ),
+                ? const Center(
+                    child: Text("No new notifications", style: TextStyle(color: Colors.white70, fontSize: 18)),
                   )
                 : RefreshIndicator(
                     onRefresh: _fetchPendingMatches,
-                    color: AppTheme.lightTheme.primaryColor,
                     child: ListView.builder(
                       itemCount: _pendingMatches.length,
                       itemBuilder: (context, index) {
-                        final user = _pendingMatches[index];
+                        final user = _pendingMatches.keys.elementAt(index);
+                        final requestType = _pendingMatches[user]; // 'friend' or 'crush'
+
+                        // --- UI LOGIC MODIFIED ---
+                        bool isCrushRequest = requestType == 'crush';
+                        String subtitleText = isCrushRequest ? 'Has a crush on you!' : 'Wants to be your friend!';
+                        String buttonText = isCrushRequest ? 'Crush Back' : 'Friend Back';
+                        VoidCallback onPressedAction = isCrushRequest ? () => _crushBackUser(user) : () => _friendBackUser(user);
+
                         return Card(
                           color: Colors.white.withOpacity(0.1),
                           margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                           child: ListTile(
-                            onTap: () { // Add onTap to navigate to profile view
-                              Navigator.of(context).pushNamed('/view_profile', arguments: user); // Navigate and pass user data
+                            onTap: () {
+                              Navigator.of(context).pushNamed('/view_profile', arguments: user);
                             },
                             leading: CircleAvatar(
                               backgroundImage: NetworkImage(user.profilePhotos.isNotEmpty
@@ -119,13 +125,13 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                               user.displayName ?? 'Unknown',
                               style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                             ),
-                            subtitle: const Text(
-                              'Has sent you a match request!',
-                              style: TextStyle(color: Colors.white70),
+                            subtitle: Text(
+                              subtitleText,
+                              style: const TextStyle(color: Colors.white70),
                             ),
                             trailing: ElevatedButton(
-                              onPressed: () => _likeBackUser(user),
-                              child: const Text('Match Back'),
+                              onPressed: onPressedAction,
+                              child: Text(buttonText),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: AppTheme.lightTheme.primaryColor,
                                 foregroundColor: Colors.white,

@@ -4,50 +4,33 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:campus_crush/models/user_model.dart';
-import 'package:geolocator/geolocator.dart'; // For location services
-import 'package:firebase_messaging/firebase_messaging.dart'; // Import Firebase Messaging
+import 'package:geolocator/geolocator.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 
+enum SwipeAction { reject, friend, crush }
 
 class UserService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
   final firebase_auth.FirebaseAuth _auth = firebase_auth.FirebaseAuth.instance;
-  final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance; // Instance for FCM
+  final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
 
-  // Get current user's UID
   String? getCurrentUserId() {
     return _auth.currentUser?.uid;
   }
 
-  // Create a new user in Firestore
   Future<void> createUser(User user) async {
-    try {
-      // Get FCM token and add to user data before creating
-      String? fcmToken = await _firebaseMessaging.getToken();
-      User userWithToken = user.copyWith(fcmToken: fcmToken);
-
-      await _firestore.collection('users').doc(user.uid).set(userWithToken.toMap());
-    } catch (e) {
-      print('Error creating user: $e');
-      rethrow;
-    }
+    await _firestore.collection('users').doc(user.uid).set(user.toMap());
   }
 
-  // Get user data by UID
   Future<User?> getUser(String uid) async {
-    try {
-      DocumentSnapshot doc = await _firestore.collection('users').doc(uid).get();
-      if (doc.exists) {
-        return User.fromFirestore(doc);
-      }
-      return null;
-    } catch (e) {
-      print('Error getting user: $e');
-      rethrow;
+    DocumentSnapshot doc = await _firestore.collection('users').doc(uid).get();
+    if (doc.exists) {
+      return User.fromFirestore(doc);
     }
+    return null;
   }
-
-  // New method: Get a real-time stream of user data by UID
+  
   Stream<User?> getUserStream(String uid) {
     return _firestore.collection('users').doc(uid).snapshots().map((snapshot) {
       if (snapshot.exists) {
@@ -57,237 +40,160 @@ class UserService {
     });
   }
 
-  // Update user data in Firestore
   Future<void> updateUser(User user) async {
-    try {
-      // Ensure the UID is not null before attempting to update
-      if (user.uid == null) {
-        throw Exception('User UID cannot be null for update operation.');
-      }
-      // SetOptions(merge: true) is used to update fields without overwriting the entire document.
-      // This is crucial for updating things like profile photos without affecting other fields.
-      await _firestore.collection('users').doc(user.uid).set(user.toMap(), SetOptions(merge: true));
-    } catch (e) {
-      print('Error updating user: $e');
-      rethrow;
-    }
+    await _firestore.collection('users').doc(user.uid).set(user.toMap(), SetOptions(merge: true));
   }
 
-  // Upload profile photo to Firebase Storage
   Future<String?> uploadProfilePhoto(String uid, File imageFile) async {
-    try {
       String fileName = 'profile_photos/$uid/${DateTime.now().millisecondsSinceEpoch}.jpg';
       UploadTask uploadTask = _storage.ref().child(fileName).putFile(imageFile);
       TaskSnapshot snapshot = await uploadTask;
-      String downloadUrl = await snapshot.ref.getDownloadURL();
-      return downloadUrl;
-    } catch (e) {
-      print('Error uploading profile photo: $e');
-      rethrow;
-    }
+      return await snapshot.ref.getDownloadURL();
   }
 
-  // Method to update the user's FCM token in Firestore
-  Future<void> updateFcmToken(String uid) async {
-    try {
-      String? fcmToken = await _firebaseMessaging.getToken();
-      if (fcmToken != null) {
-        await _firestore.collection('users').doc(uid).update({
-          'fcmToken': fcmToken,
-        });
-        print('FCM token updated for user $uid: $fcmToken');
-      }
-    } catch (e) {
-      print('Error updating FCM token: $e');
-    }
-  }
-
-  // Swipe logic (like/dislike)
-  Future<void> swipeUser(String swipedUserId, bool liked) async {
+  Future<String?> swipeUser(String swipedUserId, SwipeAction action) async {
     final currentUserId = getCurrentUserId();
-    if (currentUserId == null) {
-      throw Exception('User not logged in.');
-    }
+    if (currentUserId == null) throw Exception('User not logged in.');
 
     DocumentReference currentUserRef = _firestore.collection('users').doc(currentUserId);
     DocumentReference swipedUserRef = _firestore.collection('users').doc(swipedUserId);
 
+    String fieldToAdd;
+    switch (action) {
+      case SwipeAction.reject:
+        fieldToAdd = 'rejectedUsers';
+        break;
+      case SwipeAction.friend:
+        fieldToAdd = 'friendedUsers';
+        break;
+      case SwipeAction.crush:
+        fieldToAdd = 'crushedUsers';
+        break;
+    }
+
     return _firestore.runTransaction((transaction) async {
-      DocumentSnapshot currentUserDoc = await transaction.get(currentUserRef);
       DocumentSnapshot swipedUserDoc = await transaction.get(swipedUserRef);
-
-      if (!currentUserDoc.exists || !swipedUserDoc.exists) {
-        throw Exception('User data not found for swipe operation.');
-      }
-
-      User currentUser = User.fromFirestore(currentUserDoc);
+      if (!swipedUserDoc.exists) throw Exception('Swiped user does not exist.');
+      
       User swipedUser = User.fromFirestore(swipedUserDoc);
 
-      if (liked) {
-        if (!currentUser.likedUsers.contains(swipedUserId)) {
-          currentUser.likedUsers.add(swipedUserId);
+      transaction.update(currentUserRef, {
+        fieldToAdd: FieldValue.arrayUnion([swipedUserId])
+      });
+
+      if (action == SwipeAction.friend) {
+        if (swipedUser.friendedUsers.contains(currentUserId)) {
+          transaction.update(currentUserRef, {'friendMatches': FieldValue.arrayUnion([swipedUserId])});
+          transaction.update(swipedUserRef, {'friendMatches': FieldValue.arrayUnion([currentUserId])});
+          return 'friend_match';
         }
-        if (swipedUser.likedUsers.contains(currentUserId)) {
-          if (!currentUser.matches.contains(swipedUserId)) {
-            currentUser.matches.add(swipedUserId);
-          }
-          if (!swipedUser.matches.contains(currentUserId)) {
-            swipedUser.matches.add(currentUserId);
-          }
-          print('MATCH! ${currentUser.displayName} and ${swipedUser.displayName}');
-          // TODO: Trigger a push notification for the match!
-        }
-      } else {
-        if (!currentUser.dislikedUsers.contains(swipedUserId)) {
-          currentUser.dislikedUsers.add(swipedUserId);
+      } else if (action == SwipeAction.crush) {
+        if (swipedUser.crushedUsers.contains(currentUserId) || swipedUser.friendedUsers.contains(currentUserId)) {
+          transaction.update(currentUserRef, {'crushMatches': FieldValue.arrayUnion([swipedUserId])});
+          transaction.update(swipedUserRef, {'crushMatches': FieldValue.arrayUnion([currentUserId])});
+          
+          transaction.update(currentUserRef, {'friendMatches': FieldValue.arrayRemove([swipedUserId])});
+          transaction.update(swipedUserRef, {'friendMatches': FieldValue.arrayRemove([currentUserId])});
+          return 'crush_match';
         }
       }
-
-      transaction.update(currentUserRef, {
-        'likedUsers': currentUser.likedUsers,
-        'dislikedUsers': currentUser.dislikedUsers,
-        'matches': currentUser.matches,
-      });
-      transaction.update(swipedUserRef, {
-        'matches': swipedUser.matches,
-      });
+      
+      return null;
     });
   }
 
-  Future<bool> checkMatch(String swipedUserId) async {
-    final currentUserId = getCurrentUserId();
-    if (currentUserId == null) return false;
-
-    DocumentSnapshot currentUserDoc = await _firestore.collection('users').doc(currentUserId).get();
-    DocumentSnapshot swipedUserDoc = await _firestore.collection('users').doc(swipedUserId).get();
-
-    if (!currentUserDoc.exists || !swipedUserDoc.exists) {
-      return false;
-    }
-
-    User currentUser = User.fromFirestore(currentUserDoc);
-    User swipedUser = User.fromFirestore(swipedUserDoc);
-
-    return currentUser.matches.contains(swipedUserId) && swipedUser.matches.contains(currentUserId);
-  }
-
-  // Get potential matches based on preferences and already swiped users
   Future<List<User>> getPotentialMatches() async {
-    final currentUserId = getCurrentUserId();
-    if (currentUserId == null) {
-      return [];
-    }
-
-    User? currentUser = await getUser(currentUserId);
-    if (currentUser == null) {
-      return [];
-    }
-
-    List<String> alreadySwiped = [...currentUser.likedUsers, ...currentUser.dislikedUsers];
-    alreadySwiped.add(currentUserId); // Don't show current user
-
-    Query query = _firestore.collection('users');
-
-    // Apply gender preference
-    if (currentUser.genderPreference != null && currentUser.genderPreference != 'Both') {
-      query = query.where('gender', isEqualTo: currentUser.genderPreference);
-    }
-
-    // Apply age preference
-    if (currentUser.minAgePreference != null) {
-      query = query.where('age', isGreaterThanOrEqualTo: currentUser.minAgePreference);
-    }
-    if (currentUser.maxAgePreference != null) {
-      query = query.where('age', isLessThanOrEqualTo: currentUser.maxAgePreference);
-    }
-
-    QuerySnapshot snapshot = await query.get();
-    List<User> allUsers = snapshot.docs.map((doc) => User.fromFirestore(doc)).toList();
-
-    List<User> potentialMatches = [];
-    for (User user in allUsers) {
-      if (alreadySwiped.contains(user.uid)) {
-        continue;
-      }
-      potentialMatches.add(user);
-    }
-    return potentialMatches;
-  }
-  
-  // New method to get pending matches (users who liked you) [cite: lib/services/user_service.dart]
-  Future<List<User>> getPendingMatches() async {
     final currentUserId = getCurrentUserId();
     if (currentUserId == null) return [];
 
-    // Find all users who have liked the current user but are not yet matched
-    QuerySnapshot querySnapshot = await _firestore.collection('users')
-        .where('likedUsers', arrayContains: currentUserId)
-        .get();
-
-    List<User> likedByUsers = querySnapshot.docs.map((doc) => User.fromFirestore(doc)).toList();
-
-    // Now, filter out users that the current user has already liked or disliked
     User? currentUser = await getUser(currentUserId);
     if (currentUser == null) return [];
-    
-    // Remove users the current user has already swiped on
-    List<User> pendingMatches = likedByUsers.where((user) {
-      return !currentUser.likedUsers.contains(user.uid!) && !currentUser.dislikedUsers.contains(user.uid!);
-    }).toList();
 
+    List<String> excludedIds = [
+      currentUserId,
+      ...currentUser.rejectedUsers,
+      ...currentUser.friendedUsers,
+      ...currentUser.crushedUsers,
+      ...currentUser.friendMatches,
+      ...currentUser.crushMatches,
+    ];
+
+    Query query = _firestore.collection('users');
+    if (currentUser.genderPreference != null && currentUser.genderPreference != 'Both') {
+      query = query.where('gender', isEqualTo: currentUser.genderPreference);
+    }
+    
+    final QuerySnapshot snapshot = await query.get();
+
+    final potentialMatches = snapshot.docs
+        .map((doc) => User.fromFirestore(doc))
+        .where((user) => !excludedIds.contains(user.uid))
+        .toList();
+    
+    return potentialMatches;
+  }
+
+  Future<Map<User, String>> getPendingMatches() async {
+    final currentUserId = getCurrentUserId();
+    if (currentUserId == null) return {};
+
+    User? currentUser = await getUser(currentUserId);
+    if (currentUser == null) return {};
+
+    QuerySnapshot querySnapshot = await _firestore.collection('users')
+        .where(Filter.or(
+            Filter('friendedUsers', arrayContains: currentUserId),
+            Filter('crushedUsers', arrayContains: currentUserId)
+        )).get();
+
+    Map<User, String> pendingMatches = {};
+    for (var doc in querySnapshot.docs) {
+      User user = User.fromFirestore(doc);
+      
+      String requestType = user.crushedUsers.contains(currentUserId) ? 'crush' : 'friend';
+      
+      bool alreadySwiped = currentUser.rejectedUsers.contains(user.uid) ||
+                           currentUser.friendedUsers.contains(user.uid) ||
+                           currentUser.crushedUsers.contains(user.uid);
+
+      if (!alreadySwiped) {
+        pendingMatches[user] = requestType;
+      }
+    }
     return pendingMatches;
   }
 
-
-  Future<List<User>> getMatches() async {
+  Future<List<User>> getFriendMatches() async {
     final currentUserId = getCurrentUserId();
-    if (currentUserId == null) {
-      return [];
-    }
-
+    if (currentUserId == null) return [];
     User? currentUser = await getUser(currentUserId);
-    if (currentUser == null || currentUser.matches.isEmpty) {
-      return [];
-    }
+    if (currentUser == null || currentUser.friendMatches.isEmpty) return [];
 
-    List<User> matchedUsers = [];
-    for (String uid in currentUser.matches) {
-      User? user = await getUser(uid);
-      if (user != null) {
-        matchedUsers.add(user);
-      }
-    }
-    return matchedUsers;
+    final users = await _firestore.collection('users').where(FieldPath.documentId, whereIn: currentUser.friendMatches).get();
+    return users.docs.map((doc) => User.fromFirestore(doc)).toList();
   }
 
-  Future<void> blockUser(String userIdToBlock) async {
+  Future<List<User>> getCrushMatches() async {
     final currentUserId = getCurrentUserId();
-    if (currentUserId == null) {
-      throw Exception('User not logged in.');
-    }
+    if (currentUserId == null) return [];
+    User? currentUser = await getUser(currentUserId);
+    if (currentUser == null || currentUser.crushMatches.isEmpty) return [];
 
-    await _firestore.collection('users').doc(currentUserId).update({
-      'blockedUsers': FieldValue.arrayUnion([userIdToBlock]),
-    });
-    print('User $userIdToBlock blocked by $currentUserId');
+    final users = await _firestore.collection('users').where(FieldPath.documentId, whereIn: currentUser.crushMatches).get();
+    return users.docs.map((doc) => User.fromFirestore(doc)).toList();
   }
-
-  Future<void> reportUser(String userIdToReport, String reason) async {
-    final currentUserId = getCurrentUserId();
-    if (currentUserId == null) {
-      throw Exception('User not logged in.');
+  
+  Future<List<User>> getReportedUsers() async {
+    try {
+      final querySnapshot = await _firestore
+          .collection('users')
+          .where('reportedByUsers', isNotEqualTo: [])
+          .get();
+      
+      return querySnapshot.docs.map((doc) => User.fromFirestore(doc)).toList();
+    } catch (e) {
+      print('Error getting reported users: $e');
+      rethrow;
     }
-
-    await _firestore.collection('users').doc(userIdToReport).update({
-      'reportedByUsers': FieldValue.arrayUnion([currentUserId]),
-    });
-
-    await _firestore.collection('reports').add({
-      'reporterId': currentUserId,
-      'reportedId': userIdToReport,
-      'reason': reason,
-      'timestamp': FieldValue.serverTimestamp(),
-    });
-    print('User $userIdToReport reported by $currentUserId for reason: $reason');
   }
 }

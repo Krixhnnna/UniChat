@@ -2,11 +2,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../services/auth_service.dart';
 import '../../services/user_service.dart';
 import '../auth/signup_screen.dart';
 import '../../models/user_model.dart';
-import 'package:campus_crush/widgets/animated_background.dart';
+import '../../widgets/animated_background.dart';
 
 
 class LoginScreen extends StatefulWidget {
@@ -41,18 +42,20 @@ class _LoginScreenState extends State<LoginScreen> {
         Navigator.of(context).pushReplacementNamed('/home');
       } on FirebaseAuthException catch (e) {
         String errorMessage = 'Login failed. Please check your credentials.';
-        if (e.code == 'user-not-found') {
-          errorMessage = 'No user found for that email.';
+        
+        if (e.code == 'user-not-found' || e.code == 'invalid-credential') {
+          errorMessage = 'Email not registered or password incorrect.';
         } else if (e.code == 'wrong-password') {
           errorMessage = 'Wrong password provided for that user.';
         } else if (e.code == 'invalid-email') {
           errorMessage = 'The email address is not valid.';
         }
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(errorMessage)),
         );
         print('Firebase Auth Error during signin: ${e.code} - ${e.message}');
-      } catch (e) {
+      } catch (e) { // CORRECTED: Removed the extra dot
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('An unexpected error occurred: $e')),
         );
@@ -66,9 +69,10 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _resetPassword() async {
-    if (_emailController.text.isEmpty || !_emailController.text.contains('@')) {
+    final email = _emailController.text.trim();
+    if (email.isEmpty || !email.contains('@')) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a valid email address to reset your password.')),
+        const SnackBar(content: Text('Please enter a valid email address.')),
       );
       return;
     }
@@ -78,19 +82,30 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      await FirebaseAuth.instance.sendPasswordResetEmail(email: _emailController.text.trim());
+      final userQuery = await FirebaseFirestore.instance
+          .collection('users')
+          .where('email', isEqualTo: email)
+          .limit(1)
+          .get();
+
+      // DEBUG PRINT STATEMENT
+      print('DEBUG: Found ${userQuery.docs.length} user(s) with email $email');
+
+      if (userQuery.docs.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Email not registered. Please sign up.')),
+        );
+        // Important: Stop the function execution here
+        return; 
+      }
+
+      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Password reset link sent to ${_emailController.text}. Please check your email.')),
+        SnackBar(content: Text('Password reset link sent to $email. Please check your email.')),
       );
     } on FirebaseAuthException catch (e) {
-      String errorMessage = 'Failed to send password reset email.';
-      if (e.code == 'user-not-found') {
-        errorMessage = 'No user found for that email address.';
-      } else if (e.code == 'invalid-email') {
-        errorMessage = 'The email address is not valid.';
-      }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(errorMessage)),
+        SnackBar(content: Text('Failed to send reset email: ${e.message}')),
       );
       print('Firebase Auth Error during password reset: ${e.code} - ${e.message}');
     } catch (e) {

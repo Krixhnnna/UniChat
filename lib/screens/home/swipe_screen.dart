@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:math' as math;
 
-
 class SwipeScreen extends StatefulWidget {
   @override
   _SwipeScreenState createState() => _SwipeScreenState();
@@ -14,8 +13,6 @@ class SwipeScreen extends StatefulWidget {
 
 class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin {
   late AnimationController _animationController;
-  late Animation<Offset> _swipeAnimation;
-  late Animation<double> _rotationAnimation;
   int _currentIndex = 0;
   List<User> _potentialMatches = [];
   bool _isLoading = true;
@@ -29,35 +26,16 @@ class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin
       vsync: this,
       duration: const Duration(milliseconds: 300),
     );
-
-    _swipeAnimation = Tween<Offset>(
-      begin: Offset.zero,
-      end: const Offset(1.5, 0.0),
-    ).animate(CurvedAnimation(
-      parent: _animationController,
-      curve: Curves.easeOutCubic,
-    ));
-
-    _rotationAnimation = Tween<double>(
-      begin: 0.0,
-      end: math.pi / 8,
-    ).animate(CurvedAnimation(
-      parent: _animationController,
-      curve: Curves.easeOutCubic,
-    ));
-
     _loadScreenData();
   }
-
+  
   Future<void> _loadScreenData() async {
+    if (mounted) setState(() => _isLoadingCurrentUser = true);
     await _fetchCurrentUserProfile();
-    if (!_isProfileIncomplete()) {
+    if (_currentUser != null && !_isProfileIncomplete()) {
       await _fetchPotentialMatches();
     }
-    setState(() {
-      _isLoadingCurrentUser = false;
-      _isLoading = false;
-    });
+    if(mounted) setState(() => _isLoadingCurrentUser = false);
   }
 
   Future<void> _fetchCurrentUserProfile() async {
@@ -66,38 +44,33 @@ class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin
     if (currentUserId != null) {
       try {
         User? user = await userService.getUser(currentUserId);
-        setState(() {
-          _currentUser = user;
-        });
+        if(mounted){
+          setState(() {
+            _currentUser = user;
+          });
+        }
       } catch (e) {
         print('Error fetching current user profile for SwipeScreen: $e');
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to load your profile data.')),
-        );
       }
     }
   }
 
   Future<void> _fetchPotentialMatches() async {
+    if(mounted) setState(() { _isLoading = true; });
     final userService = Provider.of<UserService>(context, listen: false);
-    if (_currentUser == null) {
-      setState(() { _isLoading = false; });
-      return;
-    }
 
     try {
       final matches = await userService.getPotentialMatches();
-      setState(() {
-        _potentialMatches = matches;
-      });
+      if(mounted) {
+        setState(() {
+          _potentialMatches = matches;
+          _currentIndex = 0;
+        });
+      }
     } catch (e) {
       print('Error fetching potential matches: $e');
-      setState(() {
-        _isLoading = false;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to load potential matches. Please try again.')),
-      );
+    } finally {
+       if(mounted) setState(() { _isLoading = false; });
     }
   }
 
@@ -106,42 +79,30 @@ class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin
     if (_currentUser!.displayName == null || _currentUser!.displayName!.trim().isEmpty) return true;
     if (_currentUser!.bio == null || _currentUser!.bio!.trim().isEmpty) return true;
     if (_currentUser!.profilePhotos.isEmpty) return true;
-    if (_currentUser!.gender == null || _currentUser!.gender!.trim().isEmpty) return true;
-    if (_currentUser!.age == null || _currentUser!.age! < 18) return true;
-    if (_currentUser!.college == null || _currentUser!.college!.trim().isEmpty) return true;
     return false;
   }
 
-  void _onSwipe(bool liked) async {
+  void _onSwipe(SwipeAction action) async {
     if (_currentIndex >= _potentialMatches.length) return;
 
     final userService = Provider.of<UserService>(context, listen: false);
     final swipedUser = _potentialMatches[_currentIndex];
 
-    if (liked) {
-      _swipeAnimation = Tween<Offset>(begin: Offset.zero, end: const Offset(1.5, 0.0)).animate(_animationController);
-      _rotationAnimation = Tween<double>(begin: 0.0, end: math.pi / 8).animate(_animationController);
-    } else {
-      _swipeAnimation = Tween<Offset>(begin: Offset.zero, end: const Offset(-1.5, 0.0)).animate(_animationController);
-      _rotationAnimation = Tween<double>(begin: 0.0, end: -math.pi / 8).animate(_animationController);
-    }
-
     _animationController.forward().then((_) {
       _animationController.reset();
-      setState(() {
-        if (_currentIndex < _potentialMatches.length) {
-          _currentIndex++;
-        }
-      });
+      if(mounted) {
+        setState(() {
+          if (_currentIndex < _potentialMatches.length) {
+            _currentIndex++;
+          }
+        });
+      }
     });
 
     try {
-      await userService.swipeUser(swipedUser.uid!, liked);
-      if (liked) {
-        final isMatch = await userService.checkMatch(swipedUser.uid!);
-        if (isMatch) {
-          _showMatchDialog(swipedUser);
-        }
+      final matchResult = await userService.swipeUser(swipedUser.uid, action);
+      if (matchResult != null) {
+        _showMatchDialog(swipedUser, matchResult);
       }
     } catch (e) {
       print('Error swiping user: $e');
@@ -151,12 +112,12 @@ class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin
     }
   }
 
-  void _showMatchDialog(User matchedUser) {
+  void _showMatchDialog(User matchedUser, String matchType) {
     showDialog(
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: const Text('It\'s a Match!'),
+          title: Text(matchType == 'crush_match' ? 'It\'s a Crush!' : 'You\'re Friends!'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -165,15 +126,18 @@ class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin
                 backgroundImage: NetworkImage(matchedUser.profilePhotos.isNotEmpty ? matchedUser.profilePhotos[0] : 'assets/default_avatar.png'),
               ),
               const SizedBox(height: 10),
-              Text('You matched with ${matchedUser.displayName ?? 'Someone'}!'),
+              Text(
+                matchType == 'crush_match'
+                    ? 'You and ${matchedUser.displayName ?? 'Someone'} have a crush on each other!'
+                    : 'You and ${matchedUser.displayName ?? 'Someone'} are now friends!',
+                textAlign: TextAlign.center,
+              ),
             ],
           ),
           actions: <Widget>[
             TextButton(
               child: const Text('Keep Swiping'),
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
+              onPressed: () => Navigator.of(context).pop(),
             ),
             TextButton(
               child: const Text('Send a Message'),
@@ -199,7 +163,7 @@ class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin
     final double topContentPadding = MediaQuery.of(context).padding.top + AppBar().preferredSize.height + 16.0;
 
     if (_isLoadingCurrentUser) {
-      return Center(child: CircularProgressIndicator());
+      return const Center(child: CircularProgressIndicator());
     }
 
     if (_isProfileIncomplete()) {
@@ -208,63 +172,21 @@ class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin
         child: Center(
           child: Card(
             margin: const EdgeInsets.symmetric(horizontal: 30),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-            elevation: 10,
             child: Padding(
               padding: const EdgeInsets.all(20.0),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 60),
-                  const SizedBox(height: 15),
-                  Text(
-                    'Profile Incomplete!',
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                  color: AppTheme.lightTheme.primaryColor,
-                                ),
-                    textAlign: TextAlign.center,
-                  ),
+                  const Text('Profile Incomplete!', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 10),
-                  Text(
-                    'Please complete your profile to start swiping and connect with others.',
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.grey[700]),
-                    textAlign: TextAlign.center,
-                  ),
+                  const Text('Please complete your profile to start swiping.', textAlign: TextAlign.center),
                   const SizedBox(height: 20),
-                  ElevatedButton.icon(
+                  ElevatedButton(
                     onPressed: () async {
-                      final userService = Provider.of<UserService>(context, listen: false);
-                      final currentFirebaseUser = userService.getCurrentUserId();
-                      if (currentFirebaseUser != null) {
-                        final currentUserModel = await userService.getUser(currentFirebaseUser);
-                        if (currentUserModel != null) {
-                          await Navigator.pushNamed(
-                            context,
-                            '/edit_profile',
-                            arguments: currentUserModel,
-                          );
-                          _loadScreenData();
-                        } else {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Failed to load profile data.')),
-                          );
-                        }
-                      }
+                      await Navigator.pushNamed(context, '/edit_profile', arguments: _currentUser);
+                      _loadScreenData();
                     },
-                    icon: const Icon(Icons.person_add_alt_1, color: Colors.white),
-                    label: const Text(
-                      'Complete Profile',
-                      style: TextStyle(color: Colors.white),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.lightTheme.primaryColor,
-                      padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(30),
-                      ),
-                      elevation: 5,
-                    ),
+                    child: const Text('Complete Profile'),
                   ),
                 ],
               ),
@@ -273,115 +195,124 @@ class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin
         ),
       );
     }
-
-    if (_potentialMatches.isEmpty && !_isLoading) {
-      return Padding(
+    
+    return RefreshIndicator(
+      onRefresh: _fetchPotentialMatches,
+      color: AppTheme.lightTheme.primaryColor,
+      child: Padding(
         padding: EdgeInsets.only(top: topContentPadding),
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(20.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.people_alt_outlined, size: 80, color: Colors.grey[400]),
-                const SizedBox(height: 20),
-                Text(
-                  'No new crushes around right now!',
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(color: Colors.white),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  'Come back later, or adjust your settings to find more people.',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white70),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 30),
-                ElevatedButton.icon(
-                  onPressed: _fetchPotentialMatches,
-                  icon: const Icon(Icons.refresh, color: Colors.white),
-                  label: const Text('Refresh', style: TextStyle(color: Colors.white)),
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                    backgroundColor: AppTheme.lightTheme.primaryColor,
-                    foregroundColor: Colors.white,
+        child: Column(
+          children: [
+            Expanded(
+              child: (_potentialMatches.isEmpty && !_isLoading) 
+              ? Center(
+                  child: ListView(
+                    children: [
+                      SizedBox(height: MediaQuery.of(context).size.height * 0.2),
+                      Icon(Icons.people_alt_outlined, size: 80, color: Colors.grey[400]),
+                      const SizedBox(height: 20),
+                      Text(
+                        'No new profiles right now!',
+                        style: Theme.of(context).textTheme.headlineSmall?.copyWith(color: Colors.white),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        'Come back later, or pull down to refresh.',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white70),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
                   ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
+                )
+              : Stack(
+                alignment: Alignment.center,
+                children: _potentialMatches.asMap().entries.map((entry) {
+                  int index = entry.key;
+                  User user = entry.value;
 
-    return Padding(
-      padding: EdgeInsets.only(top: topContentPadding),
-      child: Column(
-        children: [
-          Expanded(
-            child: Stack(
-              children: [
-                if (_currentIndex + 1 < _potentialMatches.length)
-                  _buildProfileCard(context, _potentialMatches[_currentIndex + 1], isBehind: true),
-                if (_currentIndex + 2 < _potentialMatches.length)
-                  _buildProfileCard(context, _potentialMatches[_currentIndex + 2], isBehind: true),
-
-                if (_currentIndex < _potentialMatches.length)
-                  GestureDetector(
-                    onPanUpdate: (details) {
-                      _animationController.value += details.delta.dx / (MediaQuery.of(context).size.width * 1.0);
-                    },
-                    onPanEnd: (details) {
-                      if (_animationController.value > 0.4) {
-                        _onSwipe(true);
-                      } else if (_animationController.value < -0.4) {
-                        _onSwipe(false);
-                      } else {
-                        _animationController.reverse();
-                      }
-                    },
-                    child: AnimatedBuilder(
-                      animation: _animationController,
-                      builder: (context, child) {
-                        final offsetX = _swipeAnimation.value.dx * MediaQuery.of(context).size.width / 2;
-                        final rotationAngle = _rotationAnimation.value * (_animationController.value.sign);
-
-                        return Transform.translate(
-                          offset: Offset(offsetX, 0),
-                          child: Transform.rotate(
-                            angle: rotationAngle,
-                            alignment: Alignment.bottomCenter,
-                            child: _buildProfileCard(context, _potentialMatches[_currentIndex]),
-                          ),
-                        );
+                  if (index < _currentIndex) return const SizedBox.shrink();
+                  
+                  if (index == _currentIndex) {
+                    return GestureDetector(
+                      onPanUpdate: (details) {
+                        _animationController.value += details.delta.dx / (MediaQuery.of(context).size.width);
                       },
-                    ),
+                      onPanEnd: (details) {
+                        if (_animationController.value > 0.4) {
+                          _onSwipe(SwipeAction.crush);
+                        } else if (_animationController.value < -0.4) {
+                          _onSwipe(SwipeAction.reject);
+                        } else {
+                          _animationController.reverse();
+                        }
+                      },
+                      child: AnimatedBuilder(
+                        animation: _animationController,
+                        builder: (context, child) {
+                          return Transform.translate(
+                            offset: Offset(_animationController.value * 500, 0),
+                            child: Transform.rotate(
+                              angle: _animationController.value * (math.pi / 8),
+                              child: _buildProfileCard(context, user),
+                            ),
+                          );
+                        },
+                      ),
+                    );
+                  }
+                  
+                  return Transform.translate(
+                    offset: Offset(0, 10.0 * (index - _currentIndex)),
+                    child: _buildProfileCard(context, user, isBehind: true),
+                  );
+                }).toList().reversed.toList(),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 20.0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _buildActionButton(
+                    onPressed: () => _onSwipe(SwipeAction.reject),
+                    icon: Icons.close,
+                    color: Colors.red,
                   ),
-              ],
+                  _buildActionButton(
+                    onPressed: () => _onSwipe(SwipeAction.friend),
+                    icon: Icons.people_outline,
+                    color: Colors.blue,
+                    isLarge: true,
+                  ),
+                  _buildActionButton(
+                    onPressed: () => _onSwipe(SwipeAction.crush),
+                    icon: Icons.favorite,
+                    color: Colors.pink,
+                  ),
+                ],
+              ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 20.0),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                FloatingActionButton(
-                  heroTag: 'dislikeBtn',
-                  onPressed: () => _onSwipe(false),
-                  backgroundColor: Colors.redAccent,
-                  child: const Icon(Icons.close, color: Colors.white, size: 30),
-                ),
-                FloatingActionButton(
-                  heroTag: 'likeBtn',
-                  onPressed: () => _onSwipe(true),
-                  backgroundColor: Colors.greenAccent,
-                  child: const Icon(Icons.favorite, color: Colors.white, size: 30),
-                ),
-              ],
-            ),
-          ),
-        ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionButton({required VoidCallback onPressed, required IconData icon, required Color color, bool isLarge = false}) {
+     return Container(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 8, spreadRadius: 2)],
+      ),
+      child: FloatingActionButton(
+        heroTag: icon.codePoint.toString(),
+        onPressed: onPressed,
+        backgroundColor: Colors.white,
+        elevation: 0,
+        highlightElevation: 0,
+        mini: !isLarge,
+        child: Icon(icon, color: color, size: isLarge ? 40 : 25),
       ),
     );
   }
@@ -407,13 +338,7 @@ class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin
                 fit: BoxFit.cover,
                 loadingBuilder: (context, child, loadingProgress) {
                   if (loadingProgress == null) return child;
-                  return Center(
-                    child: CircularProgressIndicator(
-                      value: loadingProgress.expectedTotalBytes != null
-                          ? loadingProgress.cumulativeBytesLoaded / loadingProgress.expectedTotalBytes!
-                          : null,
-                    ),
-                  );
+                  return Center(child: CircularProgressIndicator());
                 },
                 errorBuilder: (context, error, stackTrace) => Image.asset('assets/default_avatar.png', fit: BoxFit.cover),
               ),
@@ -438,7 +363,6 @@ class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin
                       style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                             color: Colors.white,
                             fontWeight: FontWeight.bold,
-                            fontFamily: 'Poppins',
                           ),
                     ),
                     if (user.college != null && user.college!.isNotEmpty)
@@ -454,24 +378,11 @@ class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                    if (user.gender != null && user.gender!.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4.0),
-                        child: Text(
-                          user.gender!,
-                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                                color: Colors.white.withOpacity(0.8),
-                              ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
                     const SizedBox(height: 5),
                     Text(
                       user.bio ?? 'No bio available.',
                       style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                             color: Colors.white.withOpacity(0.9),
-                            fontFamily: 'IndieFlower',
                           ),
                       maxLines: 3,
                       overflow: TextOverflow.ellipsis,

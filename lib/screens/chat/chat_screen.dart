@@ -37,9 +37,11 @@ class _ChatScreenState extends State<ChatScreen> {
     if (args is User) {
       _matchedUser = args;
       _fetchCurrentUserAndListenToMatchedUserStatus();
-      _markMessagesAsRead(); // Mark messages as read when entering chat
+      _markMessagesAsRead();
     } else {
-      Navigator.pop(context);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) Navigator.pop(context);
+      });
     }
   }
 
@@ -48,13 +50,12 @@ class _ChatScreenState extends State<ChatScreen> {
     final currentUserId = userService.getCurrentUserId();
     if (currentUserId != null) {
       _currentUser = await userService.getUser(currentUserId);
-      setState(() {});
+      if (mounted) setState(() {});
       _listenToOtherUserTypingStatus();
       _listenToMatchedUserOnlineStatus();
     }
   }
 
-  // New method to mark messages as read
   void _markMessagesAsRead() {
     final databaseService = Provider.of<DatabaseService>(context, listen: false);
     final currentUserId = _currentUser?.uid;
@@ -70,9 +71,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (currentUserId != null && _matchedUser.uid != null) {
       bool newTypingStatus = _messageController.text.isNotEmpty;
       if (_isTyping != newTypingStatus) {
-        setState(() {
-          _isTyping = newTypingStatus;
-        });
+        if(mounted) setState(() => _isTyping = newTypingStatus);
         databaseService.setTypingStatus(currentUserId, _matchedUser.uid!, newTypingStatus);
       }
     }
@@ -83,9 +82,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final currentUserId = _currentUser?.uid;
     if (currentUserId != null && _matchedUser.uid != null) {
       databaseService.getTypingStatus(currentUserId, _matchedUser.uid!).listen((isTyping) {
-        setState(() {
-          _otherUserIsTyping = isTyping;
-        });
+        if (mounted) setState(() => _otherUserIsTyping = isTyping);
       });
     }
   }
@@ -94,7 +91,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final userService = Provider.of<UserService>(context, listen: false);
     if (_matchedUser.uid != null) {
       userService.getUserStream(_matchedUser.uid!).listen((user) {
-        if (user != null) {
+        if (user != null && mounted) {
           setState(() {
             _matchedUserIsOnline = user.isOnline ?? false;
             _matchedUserLastActive = user.lastActive;
@@ -106,23 +103,15 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _sendMessage() async {
     if (_messageController.text.trim().isEmpty) return;
-
     final databaseService = Provider.of<DatabaseService>(context, listen: false);
     final currentUserId = _currentUser?.uid;
-
     if (currentUserId != null && _matchedUser.uid != null) {
       try {
         await databaseService.sendMessage(
-          currentUserId,
-          _matchedUser.uid!,
-          _messageController.text.trim(),
-        );
+            currentUserId, _matchedUser.uid!, _messageController.text.trim());
         _messageController.clear();
-        _scrollController.animateTo(
-          0.0,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
+        _scrollController.animateTo(0.0,
+            duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
       } catch (e) {
         print('Error sending message: $e');
         ScaffoldMessenger.of(context).showSnackBar(
@@ -130,6 +119,136 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       }
     }
+  }
+
+  void _showMessageOptions(Message message) {
+    final databaseService = Provider.of<DatabaseService>(context, listen: false);
+    final currentUserId = _currentUser?.uid;
+    if (currentUserId == null || message.isDeleted) return;
+    
+    bool isMyMessage = message.senderId == currentUserId;
+    const reactions = ['❤️', '😂', '👍', '😢', '😮', '😡'];
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Card(
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8.0),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: reactions.map((emoji) => IconButton(
+                        icon: Text(emoji, style: const TextStyle(fontSize: 28)),
+                        onPressed: () {
+                          databaseService.addReactionToMessage(
+                              currentUserId, _matchedUser.uid!, message.id, currentUserId, emoji);
+                          Navigator.pop(context);
+                        },
+                      )).toList(),
+                    ),
+                  ),
+                ),
+                
+                if (isMyMessage)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8.0),
+                    child: Card(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                      child: Column(
+                        children: [
+                          ListTile(
+                            leading: const Icon(Icons.edit),
+                            title: const Text('Edit Message'),
+                            onTap: () {
+                              Navigator.pop(context);
+                              _showEditMessageDialog(message);
+                            },
+                          ),
+                          const Divider(height: 1),
+                          ListTile(
+                            leading: Icon(Icons.delete_outline, color: Colors.red),
+                            title: const Text('Unsend', style: TextStyle(color: Colors.red)),
+                            onTap: () {
+                              Navigator.pop(context);
+                              _showUnsendMessageConfirmation(message);
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showEditMessageDialog(Message message) {
+    final databaseService = Provider.of<DatabaseService>(context, listen: false);
+    final editController = TextEditingController(text: message.messageContent);
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Message'),
+        content: TextField(
+          controller: editController,
+          autofocus: true,
+          maxLines: null,
+        ),
+        actions: [
+          TextButton(
+            child: const Text('Cancel'),
+            onPressed: () => Navigator.pop(context),
+          ),
+          TextButton(
+            child: const Text('Save'),
+            onPressed: () {
+              if (editController.text.trim().isNotEmpty) {
+                databaseService.editMessage(
+                    _currentUser!.uid, _matchedUser.uid!, message.id, editController.text.trim());
+              }
+              Navigator.pop(context);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+  
+  void _showUnsendMessageConfirmation(Message message) {
+    final databaseService = Provider.of<DatabaseService>(context, listen: false);
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Unsend Message?'),
+        content: const Text('This message will be permanently removed for everyone.'),
+        actions: [
+          TextButton(
+            child: const Text('Cancel'),
+            onPressed: () => Navigator.pop(context),
+          ),
+          TextButton(
+            child: const Text('Unsend', style: TextStyle(color: Colors.red)),
+            onPressed: () {
+              databaseService.unsendMessage(_currentUser!.uid, _matchedUser.uid!, message.id);
+              Navigator.pop(context);
+            },
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -142,15 +261,15 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (!(_matchedUser is User)) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Chat')),
-        body: const Center(child: Text('Error: Matched user data not found.')),
+    if (_currentUser == null) {
+       return Scaffold(
+        appBar: AppBar(title: Text(_matchedUser.displayName ?? 'Chat')),
+        body: const Center(child: CircularProgressIndicator()),
       );
     }
 
     final databaseService = Provider.of<DatabaseService>(context);
-    final currentUserId = _currentUser?.uid;
+    final currentUserId = _currentUser!.uid;
 
     return Scaffold(
       appBar: AppBar(
@@ -196,76 +315,65 @@ class _ChatScreenState extends State<ChatScreen> {
       body: Column(
         children: [
           Expanded(
-            child: currentUserId == null
-                ? Center(
-                    child: CircularProgressIndicator(
-                      color: AppTheme.lightTheme.primaryColor,
+            child: StreamBuilder<List<Message>>(
+              stream: databaseService.getMessages(currentUserId, _matchedUser.uid!),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError) {
+                  return const Center(child: Text('Error loading messages.'));
+                }
+                if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                  return Center(
+                    child: Text(
+                      'Say hello to ${_matchedUser.displayName ?? 'your match'}!',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(color: Colors.grey),
                     ),
-                  )
-                : StreamBuilder<List<Message>>(
-                    stream: databaseService.getMessages(currentUserId, _matchedUser.uid!),
-                    builder: (context, snapshot) {
-                      if (snapshot.connectionState == ConnectionState.waiting) {
-                        return Center(
-                          child: CircularProgressIndicator(
-                            color: AppTheme.lightTheme.primaryColor,
+                  );
+                }
+
+                final messages = snapshot.data!;
+                return ListView.builder(
+                  controller: _scrollController,
+                  reverse: true,
+                  padding: const EdgeInsets.all(10),
+                  itemCount: messages.length,
+                  itemBuilder: (context, index) {
+                    final message = messages[index];
+                    final bool isMe = message.senderId == currentUserId;
+
+                    bool showDateSeparator = false;
+                    if (index == messages.length - 1) {
+                      showDateSeparator = true;
+                    } else {
+                      final previousMessage = messages[index + 1];
+                      final currentDate = message.timestamp.toDate();
+                      final previousDate = previousMessage.timestamp.toDate();
+                      if (currentDate.day != previousDate.day ||
+                          currentDate.month != previousDate.month ||
+                          currentDate.year != previousDate.year) {
+                        showDateSeparator = true;
+                      }
+                    }
+
+                    return Column(
+                      children: [
+                        if (showDateSeparator)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 10.0),
+                            child: Text(
+                              _formatDate(message.timestamp.toDate()),
+                              style: const TextStyle(color: Colors.grey, fontSize: 12),
+                            ),
                           ),
-                        );
-                      }
-                      if (snapshot.hasError) {
-                        print('Chat Stream Error: ${snapshot.error}');
-                        return const Center(child: Text('Error loading messages.'));
-                      }
-                      if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                        return Center(
-                          child: Text(
-                            'Say hello to ${_matchedUser.displayName ?? 'your match'}!',
-                            style: Theme.of(context).textTheme.titleMedium?.copyWith(color: Colors.grey),
-                          ),
-                        );
-                      }
-
-                      final messages = snapshot.data!;
-                      return ListView.builder(
-                        controller: _scrollController,
-                        reverse: true,
-                        padding: const EdgeInsets.all(10),
-                        itemCount: messages.length,
-                        itemBuilder: (context, index) {
-                          final message = messages[index];
-                          final bool isMe = message.senderId == currentUserId;
-
-                          bool showDateSeparator = false;
-                          if (index == messages.length - 1) {
-                            showDateSeparator = true;
-                          } else {
-                            final previousMessage = messages[index + 1];
-                            final currentDate = message.timestamp.toDate();
-                            final previousDate = previousMessage.timestamp.toDate();
-                            if (currentDate.day != previousDate.day ||
-                                currentDate.month != previousDate.month ||
-                                currentDate.year != previousDate.year) {
-                              showDateSeparator = true;
-                            }
-                          }
-
-                          return Column(
-                            children: [
-                              if (showDateSeparator)
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(vertical: 10.0),
-                                  child: Text(
-                                    _formatDate(message.timestamp.toDate()),
-                                    style: const TextStyle(color: Colors.grey, fontSize: 12),
-                                  ),
-                                ),
-                              _buildMessageBubble(message, isMe),
-                            ],
-                          );
-                        },
-                      );
-                    },
-                  ),
+                        _buildMessageBubble(message, isMe),
+                      ],
+                    );
+                  },
+                );
+              },
+            ),
           ),
           SafeArea(
             child: _buildMessageInput(),
@@ -276,46 +384,90 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildMessageBubble(Message message, bool isMe) {
-    return Align(
-      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 8.0),
-        padding: const EdgeInsets.symmetric(vertical: 10.0, horizontal: 15.0),
-        decoration: BoxDecoration(
-          color: isMe ? AppTheme.lightTheme.primaryColor : Colors.grey[300],
-          borderRadius: BorderRadius.only(
-            topLeft: Radius.circular(isMe ? 15 : 0),
-            topRight: Radius.circular(isMe ? 0 : 15),
-            bottomLeft: const Radius.circular(15),
-            bottomRight: const Radius.circular(15),
+    if (message.isDeleted) {
+      return Align(
+        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 8.0),
+          padding: const EdgeInsets.symmetric(vertical: 10.0, horizontal: 15.0),
+          decoration: BoxDecoration(
+            color: Colors.grey[200],
+            borderRadius: BorderRadius.circular(15),
           ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 3,
-              offset: const Offset(0, 2),
-            ),
-          ],
+          child: Text(
+            'This message was deleted',
+            style: TextStyle(fontStyle: FontStyle.italic, color: Colors.grey[600]),
+          ),
         ),
+      );
+    }
+
+    final reactionSummary = <String, int>{};
+    message.reactions.values.forEach((emoji) {
+      reactionSummary[emoji] = (reactionSummary[emoji] ?? 0) + 1;
+    });
+
+    return GestureDetector(
+      onLongPress: () => _showMessageOptions(message),
+      child: Align(
+        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
         child: Column(
           crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
           children: [
-            Text(
-              message.messageContent,
-              style: TextStyle(
-                color: isMe ? Colors.white : Colors.black87,
-                fontSize: 16,
-                fontFamily: 'Poppins',
+            Container(
+              margin: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 8.0),
+              padding: const EdgeInsets.symmetric(vertical: 10.0, horizontal: 15.0),
+              decoration: BoxDecoration(
+                color: isMe ? AppTheme.lightTheme.primaryColor : Colors.grey[300],
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(isMe ? 15 : 0),
+                  topRight: Radius.circular(isMe ? 0 : 15),
+                  bottomLeft: const Radius.circular(15),
+                  bottomRight: const Radius.circular(15),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                children: [
+                  Text(message.messageContent, style: TextStyle(color: isMe ? Colors.white : Colors.black87, fontSize: 16)),
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (message.isEdited)
+                        Text(
+                          'edited • ',
+                          style: TextStyle(color: isMe ? Colors.white70 : Colors.black54, fontSize: 10, fontStyle: FontStyle.italic),
+                        ),
+                      Text(
+                        _formatTime(message.timestamp.toDate()),
+                        style: TextStyle(color: isMe ? Colors.white70 : Colors.black54, fontSize: 10),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 4),
-            Text(
-              _formatTime(message.timestamp.toDate()),
-              style: TextStyle(
-                color: isMe ? Colors.white70 : Colors.black54,
-                fontSize: 10,
-              ),
-            ),
+            if (reactionSummary.isNotEmpty)
+              Transform.translate(
+                offset: const Offset(0, -8),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Card(
+                      elevation: 2,
+                      shape: const StadiumBorder(),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        child: Text(
+                          reactionSummary.entries.map((e) => '${e.key} ${e.value}').join(' '),
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              )
           ],
         ),
       ),

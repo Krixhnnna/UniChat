@@ -24,19 +24,20 @@ class DatabaseService {
         .map((snapshot) => snapshot.docs.map((doc) => Message.fromFirestore(doc)).toList());
   }
 
-  // Send a new message
+  // --- CORRECTED sendMessage METHOD ---
   Future<void> sendMessage(String senderId, String recipientId, String messageContent) async {
     List<String> userIds = [senderId, recipientId]..sort();
     String chatId = userIds.join('_');
 
-    await _firestore.collection('chats').doc(chatId).collection('messages').add({
-      'senderId': senderId,
-      'messageContent': messageContent,
-      'timestamp': FieldValue.serverTimestamp(),
-    });
-
+    // Get a reference to the main chat document and the new message document
     DocumentReference chatRef = _firestore.collection('chats').doc(chatId);
-    await chatRef.set({
+    DocumentReference messageRef = chatRef.collection('messages').doc();
+
+    // Use a batched write to perform multiple operations atomically
+    WriteBatch batch = _firestore.batch();
+
+    // 1. Set/update the main chat document first
+    batch.set(chatRef, {
       'lastMessage': messageContent,
       'lastMessageTime': FieldValue.serverTimestamp(),
       'participants': userIds,
@@ -45,20 +46,65 @@ class DatabaseService {
         recipientId: FieldValue.increment(1),
       }
     }, SetOptions(merge: true));
+
+    // 2. Then, create the new message document
+    batch.set(messageRef, {
+      'senderId': senderId,
+      'messageContent': messageContent,
+      'timestamp': FieldValue.serverTimestamp(),
+      'reactions': {},
+      'isEdited': false,
+      'isDeleted': false,
+    });
+    
+    // Commit the batch
+    await batch.commit();
+  }
+  
+  // Edit an existing message
+  Future<void> editMessage(String user1Id, String user2Id, String messageId, String newContent) async {
+    List<String> userIds = [user1Id, user2Id]..sort();
+    String chatId = userIds.join('_');
+    final messageRef = _firestore.collection('chats').doc(chatId).collection('messages').doc(messageId);
+    await messageRef.update({
+      'messageContent': newContent,
+      'isEdited': true,
+    });
   }
 
-  // Method to mark messages as read for a specific user
+  // Unsend a message (marks as deleted)
+  Future<void> unsendMessage(String user1Id, String user2Id, String messageId) async {
+    List<String> userIds = [user1Id, user2Id]..sort();
+    String chatId = userIds.join('_');
+    final messageRef = _firestore.collection('chats').doc(chatId).collection('messages').doc(messageId);
+    await messageRef.update({
+      'messageContent': 'This message was deleted',
+      'isDeleted': true,
+      'reactions': {},
+    });
+  }
+
+  // Add or update an emoji reaction to a message
+  Future<void> addReactionToMessage(String user1Id, String user2Id, String messageId, String reactorId, String emoji) async {
+    List<String> userIds = [user1Id, user2Id]..sort();
+    String chatId = userIds.join('_');
+    final messageRef = _firestore.collection('chats').doc(chatId).collection('messages').doc(messageId);
+    await messageRef.update({
+      'reactions.$reactorId': emoji
+    });
+  }
+
+  // Method to mark messages as read
   Future<void> markMessagesAsRead(String currentUserId, String otherUserId) async {
     List<String> userIds = [currentUserId, otherUserId]..sort();
     String chatId = userIds.join('_');
-
     DocumentReference chatRef = _firestore.collection('chats').doc(chatId);
     await chatRef.update({
       'unreadCounts.$currentUserId': 0,
     });
   }
 
-  // New method to get a stream of unread counts for all matches
+  // Get a stream of unread counts
   Stream<Map<String, int>> getUnreadCounts(String currentUserId) {
     return _firestore.collection('chats')
         .where('participants', arrayContains: currentUserId)
@@ -77,7 +123,7 @@ class DatabaseService {
     });
   }
   
-  // New method to set a user's typing status
+  // Set and get typing status
   Future<void> setTypingStatus(String currentUserId, String otherUserId, bool isTyping) async {
     final chatId = [currentUserId, otherUserId]..sort();
     await _firestore.collection('chats').doc(chatId.join('_')).set({
@@ -87,7 +133,6 @@ class DatabaseService {
     }, SetOptions(merge: true));
   }
 
-  // New method to get a user's typing status
   Stream<bool> getTypingStatus(String currentUserId, String otherUserId) {
     final chatId = [currentUserId, otherUserId]..sort();
     return _firestore.collection('chats').doc(chatId.join('_')).snapshots().map((snapshot) {
