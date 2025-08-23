@@ -4,6 +4,8 @@ import 'package:campus_crush/services/user_service.dart';
 import 'package:campus_crush/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:campus_crush/widgets/verification_badge.dart';
+import 'package:campus_crush/utils/user_verification.dart';
 import 'dart:math' as math;
 
 class SwipeScreen extends StatefulWidget {
@@ -11,13 +13,26 @@ class SwipeScreen extends StatefulWidget {
   _SwipeScreenState createState() => _SwipeScreenState();
 }
 
-class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin {
+class _SwipeScreenState extends State<SwipeScreen>
+    with TickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   late AnimationController _animationController;
   int _currentIndex = 0;
   List<User> _potentialMatches = [];
   bool _isLoading = true;
   User? _currentUser;
   bool _isLoadingCurrentUser = true;
+
+  // Performance optimizations
+  static const int _pageSize = 10;
+  bool _hasMoreData = true;
+  bool _isLoadingMore = false;
+  final ScrollController _scrollController = ScrollController();
+
+  // Cache for profile images
+  final Map<String, Image> _imageCache = {};
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -26,16 +41,24 @@ class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin
       vsync: this,
       duration: const Duration(milliseconds: 300),
     );
+    _scrollController.addListener(_onScroll);
     _loadScreenData();
   }
-  
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 200) {
+      _loadMoreData();
+    }
+  }
+
   Future<void> _loadScreenData() async {
     if (mounted) setState(() => _isLoadingCurrentUser = true);
     await _fetchCurrentUserProfile();
     if (_currentUser != null && !_isProfileIncomplete()) {
-      await _fetchPotentialMatches();
+      await _fetchPotentialMatches(clearExisting: true);
     }
-    if(mounted) setState(() => _isLoadingCurrentUser = false);
+    if (mounted) setState(() => _isLoadingCurrentUser = false);
   }
 
   Future<void> _fetchCurrentUserProfile() async {
@@ -44,7 +67,7 @@ class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin
     if (currentUserId != null) {
       try {
         User? user = await userService.getUser(currentUserId);
-        if(mounted){
+        if (mounted) {
           setState(() {
             _currentUser = user;
           });
@@ -55,29 +78,82 @@ class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin
     }
   }
 
-  Future<void> _fetchPotentialMatches() async {
-    if(mounted) setState(() { _isLoading = true; });
+  Future<void> _fetchPotentialMatches({bool clearExisting = false}) async {
+    if (_isLoadingMore) return;
+
+    if (clearExisting) {
+      if (mounted)
+        setState(() {
+          _isLoading = true;
+          _potentialMatches.clear();
+          _currentIndex = 0;
+          _hasMoreData = true;
+        });
+    } else {
+      if (mounted) setState(() => _isLoadingMore = true);
+    }
+
     final userService = Provider.of<UserService>(context, listen: false);
 
     try {
-      final matches = await userService.getPotentialMatches();
-      if(mounted) {
+      final matches = await userService.getPotentialMatches(
+        limit: _pageSize,
+        lastDocument: clearExisting
+            ? null
+            : _potentialMatches.isNotEmpty
+                ? _potentialMatches.last
+                : null,
+      );
+
+      if (mounted) {
         setState(() {
-          _potentialMatches = matches;
-          _currentIndex = 0;
+          if (clearExisting) {
+            _potentialMatches = matches;
+          } else {
+            _potentialMatches.addAll(matches);
+          }
+          _hasMoreData = matches.length == _pageSize;
+          _isLoading = false;
+          _isLoadingMore = false;
         });
       }
+
+      // Preload images for better performance
+      _preloadImages(matches);
     } catch (e) {
       print('Error fetching potential matches: $e');
-    } finally {
-       if(mounted) setState(() { _isLoading = false; });
+      if (mounted)
+        setState(() {
+          _isLoading = false;
+          _isLoadingMore = false;
+        });
+    }
+  }
+
+  Future<void> _loadMoreData() async {
+    if (!_hasMoreData || _isLoadingMore) return;
+    await _fetchPotentialMatches(clearExisting: false);
+  }
+
+  void _preloadImages(List<User> users) {
+    for (final user in users) {
+      if (user.profilePhotos.isNotEmpty && !_imageCache.containsKey(user.uid)) {
+        _imageCache[user.uid] = Image.network(
+          user.profilePhotos[0],
+          fit: BoxFit.cover,
+          cacheWidth: 400, // Optimize memory usage
+          cacheHeight: 600,
+        );
+      }
     }
   }
 
   bool _isProfileIncomplete() {
     if (_currentUser == null) return true;
-    if (_currentUser!.displayName == null || _currentUser!.displayName!.trim().isEmpty) return true;
-    if (_currentUser!.bio == null || _currentUser!.bio!.trim().isEmpty) return true;
+    if (_currentUser!.displayName == null ||
+        _currentUser!.displayName!.trim().isEmpty) return true;
+    if (_currentUser!.bio == null || _currentUser!.bio!.trim().isEmpty)
+      return true;
     if (_currentUser!.profilePhotos.isEmpty) return true;
     return false;
   }
@@ -90,7 +166,7 @@ class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin
 
     _animationController.forward().then((_) {
       _animationController.reset();
-      if(mounted) {
+      if (mounted) {
         setState(() {
           if (_currentIndex < _potentialMatches.length) {
             _currentIndex++;
@@ -117,13 +193,18 @@ class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: Text(matchType == 'crush_match' ? 'It\'s a Crush!' : 'You\'re Friends!'),
+          title: Text(matchType == 'crush_match'
+              ? 'It\'s a Crush!'
+              : 'You\'re Friends!'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               CircleAvatar(
                 radius: 50,
-                backgroundImage: NetworkImage(matchedUser.profilePhotos.isNotEmpty ? matchedUser.profilePhotos[0] : 'assets/default_avatar.png'),
+                backgroundImage: NetworkImage(
+                    matchedUser.profilePhotos.isNotEmpty
+                        ? matchedUser.profilePhotos[0]
+                        : 'assets/defaultpfp.png'),
               ),
               const SizedBox(height: 10),
               Text(
@@ -155,15 +236,20 @@ class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin
   @override
   void dispose() {
     _animationController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final double topContentPadding = MediaQuery.of(context).padding.top + AppBar().preferredSize.height + 16.0;
+    super.build(context); // Required for AutomaticKeepAliveClientMixin
+    final double topContentPadding = MediaQuery.of(context).padding.top +
+        AppBar().preferredSize.height +
+        16.0;
 
     if (_isLoadingCurrentUser) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(
+          child: CircularProgressIndicator(color: Color(0xFF895BE0)));
     }
 
     if (_isProfileIncomplete()) {
@@ -177,13 +263,17 @@ class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('Profile Incomplete!', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                  const Text('Profile Incomplete!',
+                      style:
+                          TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 10),
-                  const Text('Please complete your profile to start swiping.', textAlign: TextAlign.center),
+                  const Text('Please complete your profile to start swiping.',
+                      textAlign: TextAlign.center),
                   const SizedBox(height: 20),
                   ElevatedButton(
                     onPressed: () async {
-                      await Navigator.pushNamed(context, '/edit_profile', arguments: _currentUser);
+                      await Navigator.pushNamed(context, '/edit_profile',
+                          arguments: _currentUser);
                       _loadScreenData();
                     },
                     child: const Text('Complete Profile'),
@@ -195,79 +285,126 @@ class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin
         ),
       );
     }
-    
+
     return RefreshIndicator(
-      onRefresh: _fetchPotentialMatches,
-      color: AppTheme.lightTheme.primaryColor,
+      onRefresh: () => _fetchPotentialMatches(clearExisting: true),
+      color: const Color(0xFF895BE0),
       child: Padding(
         padding: EdgeInsets.only(top: topContentPadding),
         child: Column(
           children: [
             Expanded(
-              child: (_potentialMatches.isEmpty && !_isLoading) 
-              ? Center(
-                  child: ListView(
-                    children: [
-                      SizedBox(height: MediaQuery.of(context).size.height * 0.2),
-                      Icon(Icons.people_alt_outlined, size: 80, color: Colors.grey[400]),
-                      const SizedBox(height: 20),
-                      Text(
-                        'No new profiles right now!',
-                        style: Theme.of(context).textTheme.headlineSmall?.copyWith(color: Colors.white),
-                        textAlign: TextAlign.center,
+              child: (_potentialMatches.isEmpty && !_isLoading)
+                  ? Center(
+                      child: ListView(
+                        children: [
+                          SizedBox(
+                              height: MediaQuery.of(context).size.height * 0.2),
+                          Icon(Icons.people_alt_outlined,
+                              size: 80, color: Colors.grey[400]),
+                          const SizedBox(height: 20),
+                          Text(
+                            'No new profiles right now!',
+                            style: Theme.of(context)
+                                .textTheme
+                                .headlineSmall
+                                ?.copyWith(color: Colors.white),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 10),
+                          Text(
+                            'Come back later, or pull down to refresh.',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyMedium
+                                ?.copyWith(color: Colors.white70),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 10),
-                      Text(
-                        'Come back later, or pull down to refresh.',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white70),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
-                  ),
-                )
-              : Stack(
-                alignment: Alignment.center,
-                children: _potentialMatches.asMap().entries.map((entry) {
-                  int index = entry.key;
-                  User user = entry.value;
+                    )
+                  : Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        ..._potentialMatches
+                            .asMap()
+                            .entries
+                            .map((entry) {
+                              int index = entry.key;
+                              User user = entry.value;
 
-                  if (index < _currentIndex) return const SizedBox.shrink();
-                  
-                  if (index == _currentIndex) {
-                    return GestureDetector(
-                      onPanUpdate: (details) {
-                        _animationController.value += details.delta.dx / (MediaQuery.of(context).size.width);
-                      },
-                      onPanEnd: (details) {
-                        if (_animationController.value > 0.4) {
-                          _onSwipe(SwipeAction.crush);
-                        } else if (_animationController.value < -0.4) {
-                          _onSwipe(SwipeAction.reject);
-                        } else {
-                          _animationController.reverse();
-                        }
-                      },
-                      child: AnimatedBuilder(
-                        animation: _animationController,
-                        builder: (context, child) {
-                          return Transform.translate(
-                            offset: Offset(_animationController.value * 500, 0),
-                            child: Transform.rotate(
-                              angle: _animationController.value * (math.pi / 8),
-                              child: _buildProfileCard(context, user),
+                              if (index < _currentIndex)
+                                return const SizedBox.shrink();
+
+                              if (index == _currentIndex) {
+                                return GestureDetector(
+                                  onPanUpdate: (details) {
+                                    _animationController.value +=
+                                        details.delta.dx /
+                                            (MediaQuery.of(context).size.width);
+                                  },
+                                  onPanEnd: (details) {
+                                    if (_animationController.value > 0.4) {
+                                      _onSwipe(SwipeAction.crush);
+                                    } else if (_animationController.value <
+                                        -0.4) {
+                                      _onSwipe(SwipeAction.reject);
+                                    } else {
+                                      _animationController.reverse();
+                                    }
+                                  },
+                                  child: AnimatedBuilder(
+                                    animation: _animationController,
+                                    builder: (context, child) {
+                                      return Transform.translate(
+                                        offset: Offset(
+                                            _animationController.value * 500,
+                                            0),
+                                        child: Transform.rotate(
+                                          angle: _animationController.value *
+                                              (math.pi / 8),
+                                          child:
+                                              _buildProfileCard(context, user),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                );
+                              }
+
+                              return Transform.translate(
+                                offset:
+                                    Offset(0, 10.0 * (index - _currentIndex)),
+                                child: _buildProfileCard(context, user,
+                                    isBehind: true),
+                              );
+                            })
+                            .toList()
+                            .reversed
+                            .toList(),
+                        // Loading indicator for pagination
+                        if (_isLoadingMore)
+                          Positioned(
+                            bottom: 20,
+                            child: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.black54,
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                      Color(0xFF895BE0)),
+                                ),
+                              ),
                             ),
-                          );
-                        },
-                      ),
-                    );
-                  }
-                  
-                  return Transform.translate(
-                    offset: Offset(0, 10.0 * (index - _currentIndex)),
-                    child: _buildProfileCard(context, user, isBehind: true),
-                  );
-                }).toList().reversed.toList(),
-              ),
+                          ),
+                      ],
+                    ),
             ),
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 20.0),
@@ -288,7 +425,7 @@ class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin
                   _buildActionButton(
                     onPressed: () => _onSwipe(SwipeAction.crush),
                     icon: Icons.favorite,
-                    color: Colors.pink,
+                    color: Color(0xFF895BE0),
                   ),
                 ],
               ),
@@ -299,16 +436,25 @@ class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin
     );
   }
 
-  Widget _buildActionButton({required VoidCallback onPressed, required IconData icon, required Color color, bool isLarge = false}) {
-     return Container(
+  Widget _buildActionButton(
+      {required VoidCallback onPressed,
+      required IconData icon,
+      required Color color,
+      bool isLarge = false}) {
+    return Container(
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 8, spreadRadius: 2)],
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withOpacity(0.2),
+              blurRadius: 8,
+              spreadRadius: 2)
+        ],
       ),
       child: FloatingActionButton(
         heroTag: icon.codePoint.toString(),
         onPressed: onPressed,
-        backgroundColor: Colors.white,
+        backgroundColor: const Color(0xFF111111),
         elevation: 0,
         highlightElevation: 0,
         mini: !isLarge,
@@ -317,10 +463,11 @@ class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin
     );
   }
 
-  Widget _buildProfileCard(BuildContext context, User user, {bool isBehind = false}) {
+  Widget _buildProfileCard(BuildContext context, User user,
+      {bool isBehind = false}) {
     final String imageUrl = user.profilePhotos.isNotEmpty
         ? user.profilePhotos[0]
-        : 'assets/default_avatar.png';
+        : 'assets/defaultpfp.png';
 
     return Center(
       child: FractionallySizedBox(
@@ -328,20 +475,37 @@ class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin
         heightFactor: isBehind ? 0.75 : 0.85,
         child: Card(
           elevation: 8.0,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           clipBehavior: Clip.antiAlias,
           child: Stack(
             fit: StackFit.expand,
             children: [
-              Image.network(
-                imageUrl,
-                fit: BoxFit.cover,
-                loadingBuilder: (context, child, loadingProgress) {
-                  if (loadingProgress == null) return child;
-                  return Center(child: CircularProgressIndicator());
-                },
-                errorBuilder: (context, error, stackTrace) => Image.asset('assets/default_avatar.png', fit: BoxFit.cover),
-              ),
+              // Use cached image if available
+              _imageCache.containsKey(user.uid)
+                  ? _imageCache[user.uid]!
+                  : Image.network(
+                      imageUrl,
+                      fit: BoxFit.cover,
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) return child;
+                        return Center(
+                          child: CircularProgressIndicator(
+                            value: loadingProgress.expectedTotalBytes != null
+                                ? loadingProgress.cumulativeBytesLoaded /
+                                    loadingProgress.expectedTotalBytes!
+                                : null,
+                            valueColor: const AlwaysStoppedAnimation<Color>(
+                                Color(0xFF895BE0)),
+                          ),
+                        );
+                      },
+                      errorBuilder: (context, error, stackTrace) => Image.asset(
+                          'assets/defaultpfp.png',
+                          fit: BoxFit.cover),
+                      cacheWidth: 400, // Optimize memory usage
+                      cacheHeight: 600,
+                    ),
               Container(
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
@@ -358,22 +522,34 @@ class _SwipeScreenState extends State<SwipeScreen> with TickerProviderStateMixin
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      '${user.displayName ?? 'N/A'}, ${user.age ?? ''}',
-                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '${user.displayName ?? 'N/A'}, ${user.age ?? ''}',
+                          style:
+                              Theme.of(context).textTheme.headlineMedium?.copyWith(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                        ),
+                        const SizedBox(width: 8),
+                        VerificationBadge(
+                          isVerified: UserVerification.getDisplayVerificationStatus(user),
+                          size: 20,
+                        ),
+                      ],
                     ),
                     if (user.college != null && user.college!.isNotEmpty)
                       Padding(
                         padding: const EdgeInsets.only(top: 4.0),
                         child: Text(
                           user.college!,
-                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                color: Colors.white.withOpacity(0.9),
-                                fontStyle: FontStyle.italic,
-                              ),
+                          style:
+                              Theme.of(context).textTheme.titleMedium?.copyWith(
+                                    color: Colors.white.withOpacity(0.9),
+                                    fontStyle: FontStyle.italic,
+                                  ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),

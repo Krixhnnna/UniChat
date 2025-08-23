@@ -4,17 +4,23 @@ import 'package:campus_crush/services/user_service.dart';
 import 'package:campus_crush/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:campus_crush/widgets/verification_badge.dart';
+import 'package:campus_crush/utils/user_verification.dart';
 
 class MatchesScreen extends StatefulWidget {
   @override
   _MatchesScreenState createState() => _MatchesScreenState();
 }
 
-class _MatchesScreenState extends State<MatchesScreen> with SingleTickerProviderStateMixin {
+class _MatchesScreenState extends State<MatchesScreen>
+    with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   late TabController _tabController;
   List<User> _friendMatches = [];
   List<User> _crushMatches = [];
   bool _isLoading = true;
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -22,7 +28,7 @@ class _MatchesScreenState extends State<MatchesScreen> with SingleTickerProvider
     _tabController = TabController(length: 2, vsync: this);
     _fetchMatches();
   }
-  
+
   @override
   void dispose() {
     _tabController.dispose();
@@ -30,7 +36,10 @@ class _MatchesScreenState extends State<MatchesScreen> with SingleTickerProvider
   }
 
   Future<void> _fetchMatches() async {
-    if (mounted) setState(() { _isLoading = true; });
+    if (mounted)
+      setState(() {
+        _isLoading = true;
+      });
     final userService = Provider.of<UserService>(context, listen: false);
     try {
       // Fetch both lists in parallel for better performance
@@ -46,9 +55,12 @@ class _MatchesScreenState extends State<MatchesScreen> with SingleTickerProvider
         });
       }
     } catch (e) {
-      if (mounted) setState(() { _isLoading = false; });
+      if (mounted)
+        setState(() {
+          _isLoading = false;
+        });
       print('Error fetching matches: $e');
-       ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to load matches. Please try again.')),
       );
     }
@@ -56,6 +68,7 @@ class _MatchesScreenState extends State<MatchesScreen> with SingleTickerProvider
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // Required for AutomaticKeepAliveClientMixin
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: PreferredSize(
@@ -79,21 +92,30 @@ class _MatchesScreenState extends State<MatchesScreen> with SingleTickerProvider
       body: _isLoading
           ? const Center(child: CircularProgressIndicator(color: Colors.white))
           // --- FEATURE ADDED: Pull to Refresh ---
-          : RefreshIndicator(
-              onRefresh: _fetchMatches,
-              color: AppTheme.lightTheme.primaryColor,
-              child: TabBarView(
-                controller: _tabController,
-                children: [
-                  _buildMatchesGrid(_crushMatches, "No crushes yet!", "Keep swiping to find a crush!"),
-                  _buildMatchesGrid(_friendMatches, "No friends yet!", "Use the friend button to find friends!"),
-                ],
-              ),
+          : Column(
+              children: [
+                Expanded(
+                  child: RefreshIndicator(
+                    onRefresh: _fetchMatches,
+                    color: AppTheme.lightTheme.primaryColor,
+                    child: TabBarView(
+                      controller: _tabController,
+                      children: [
+                        _buildMatchesGrid(_crushMatches, "No crushes yet!",
+                            "Keep swiping to find a crush!"),
+                        _buildMatchesGrid(_friendMatches, "No friends yet!",
+                            "Use the friend button to find friends!"),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
     );
   }
 
-  Widget _buildMatchesGrid(List<User> matches, String emptyTitle, String emptySubtitle) {
+  Widget _buildMatchesGrid(
+      List<User> matches, String emptyTitle, String emptySubtitle) {
     if (matches.isEmpty) {
       return Center(
         child: Padding(
@@ -101,9 +123,15 @@ class _MatchesScreenState extends State<MatchesScreen> with SingleTickerProvider
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(emptyTitle, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+              Text(emptyTitle,
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
-              Text(emptySubtitle, style: const TextStyle(color: Colors.white70, fontSize: 16), textAlign: TextAlign.center),
+              Text(emptySubtitle,
+                  style: const TextStyle(color: Colors.white70, fontSize: 16),
+                  textAlign: TextAlign.center),
             ],
           ),
         ),
@@ -126,25 +154,44 @@ class _MatchesScreenState extends State<MatchesScreen> with SingleTickerProvider
           },
           child: Card(
             elevation: 5,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
             clipBehavior: Clip.antiAlias,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Expanded(
                   child: Image.network(
-                    match.profilePhotos.isNotEmpty ? match.profilePhotos[0] : 'assets/default_avatar.png',
+                    match.profilePhotos.isNotEmpty
+                        ? match.profilePhotos[0]
+                        : 'assets/default_avatar.png',
                     fit: BoxFit.cover,
-                     errorBuilder: (context, error, stackTrace) => Image.asset('assets/default_avatar.png', fit: BoxFit.cover),
+                    errorBuilder: (context, error, stackTrace) => Image.asset(
+                        'assets/default_avatar.png',
+                        fit: BoxFit.cover),
                   ),
                 ),
                 Padding(
                   padding: const EdgeInsets.all(8.0),
-                  child: Text(
-                    '${match.displayName ?? 'N/A'}',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${match.displayName ?? 'N/A'}',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      VerificationBadge(
+                        isVerified:
+                            UserVerification.getDisplayVerificationStatus(
+                                match),
+                        size: 16,
+                      ),
+                    ],
                   ),
                 ),
               ],

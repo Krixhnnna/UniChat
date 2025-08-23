@@ -1,1 +1,41 @@
-{"flutter":{"platforms":{"android":{"default":{"projectId":"collegecrush-eec15","appId":"1:546467456849:android:a77d2c1e912f3fb75bd570","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"collegecrush-eec15","configurations":{"android":"1:546467456849:android:a77d2c1e912f3fb75bd570","ios":"1:546467456849:ios:324511e284006fc95bd570","macos":"1:546467456849:ios:324511e284006fc95bd570","web":"1:546467456849:web:d09d9e7cc483e7ee5bd570","windows":"1:546467456849:web:76706be487b851925bd570"}}}}}}
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "collegecrush-eec15",
+          "appId": "1:546467456849:android:a77d2c1e912f3fb75bd570",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "collegecrush-eec15",
+          "configurations": {
+            "android": "1:546467456849:android:a77d2c1e912f3fb75bd570",
+            "ios": "1:546467456849:ios:324511e284006fc95bd570",
+            "macos": "1:546467456849:ios:324511e284006fc95bd570",
+            "web": "1:546467456849:web:d09d9e7cc483e7ee5bd570",
+            "windows": "1:546467456849:web:76706be487b851925bd570"
+          }
+        }
+      }
+    }
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ]
+    }
+  ]
+}

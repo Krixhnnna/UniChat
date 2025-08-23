@@ -11,13 +11,13 @@ import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'dart:io';
 // We are no longer using the 'image' package to avoid decoding errors.
-// import 'package:image/image.dart' as img; 
-
+// import 'package:image/image.dart' as img;
 
 class EditProfileScreen extends StatefulWidget {
   final User currentUser;
 
-  const EditProfileScreen({Key? key, required this.currentUser}) : super(key: key);
+  const EditProfileScreen({Key? key, required this.currentUser})
+      : super(key: key);
 
   @override
   _EditProfileScreenState createState() => _EditProfileScreenState();
@@ -29,25 +29,48 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   late TextEditingController _collegeController;
   late TextEditingController _bioController;
   late TextEditingController _ageController;
+  late TextEditingController _snapchatController;
+  late TextEditingController _instagramController;
+  late TextEditingController _discordController;
 
   String? _selectedGender;
   String? _selectedGenderPreference;
   List<String> _profilePhotos = [];
   bool _isSaving = false;
   bool _isUploading = false;
+  double _uploadProgress = 0.0;
   final ImagePicker _picker = ImagePicker();
-
 
   @override
   void initState() {
     super.initState();
-    _displayNameController = TextEditingController(text: widget.currentUser.displayName);
-    _collegeController = TextEditingController(text: widget.currentUser.college);
+    _displayNameController =
+        TextEditingController(text: widget.currentUser.displayName);
+    _collegeController =
+        TextEditingController(text: widget.currentUser.college);
     _bioController = TextEditingController(text: widget.currentUser.bio);
-    _ageController = TextEditingController(text: widget.currentUser.age?.toString() ?? '');
+    _ageController =
+        TextEditingController(text: widget.currentUser.age?.toString() ?? '');
+    _snapchatController = TextEditingController(
+        text: (widget.currentUser.prompts['snapchat'] ?? '').toString());
+    _instagramController = TextEditingController(
+        text: (widget.currentUser.prompts['instagram'] ?? '').toString());
+    _discordController = TextEditingController(
+        text: (widget.currentUser.prompts['discord'] ?? '').toString());
     _selectedGender = widget.currentUser.gender;
     _profilePhotos = List.from(widget.currentUser.profilePhotos);
     _selectedGenderPreference = widget.currentUser.genderPreference;
+
+    // Ensure dropdown values are valid; otherwise set to null to avoid assertion
+    const genders = ['Male', 'Female', 'Non-binary'];
+    if (_selectedGender == null || !genders.contains(_selectedGender)) {
+      _selectedGender = null;
+    }
+    const prefs = ['Male', 'Female', 'Both'];
+    if (_selectedGenderPreference == null ||
+        !prefs.contains(_selectedGenderPreference)) {
+      _selectedGenderPreference = null;
+    }
   }
 
   @override
@@ -56,6 +79,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _collegeController.dispose();
     _bioController.dispose();
     _ageController.dispose();
+    _snapchatController.dispose();
+    _instagramController.dispose();
+    _discordController.dispose();
     super.dispose();
   }
 
@@ -63,7 +89,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Future<void> _pickImage() async {
     try {
       // Pick an image and use image_picker's built-in compression.
-      final XFile? image = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
+      final XFile? image = await _picker.pickImage(
+        source: ImageSource.gallery,
+        // Reduce dimensions and quality to speed up uploads
+        maxWidth: 1024,
+        maxHeight: 1024,
+        imageQuality: 70,
+      );
 
       if (image != null) {
         setState(() {
@@ -71,12 +103,27 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         });
 
         String fileExtension = image.path.split('.').last;
-        String fileName = '${DateTime.now().millisecondsSinceEpoch}.$fileExtension';
-        Reference storageRef = FirebaseStorage.instance.ref().child('profile_photos/${widget.currentUser.uid}/$fileName');
+        String fileName =
+            '${DateTime.now().millisecondsSinceEpoch}.$fileExtension';
+        Reference storageRef = FirebaseStorage.instance
+            .ref()
+            .child('profile_photos/${widget.currentUser.uid}/$fileName');
 
         // Upload the file directly from its path.
-        UploadTask uploadTask = storageRef.putFile(File(image.path));
-        TaskSnapshot snapshot = await uploadTask;
+        final uploadTask = storageRef.putFile(
+          File(image.path),
+          SettableMetadata(contentType: 'image/jpeg'),
+        );
+
+        uploadTask.snapshotEvents.listen((s) {
+          if (s.totalBytes > 0) {
+            setState(() {
+              _uploadProgress = s.bytesTransferred / s.totalBytes;
+            });
+          }
+        });
+
+        final TaskSnapshot snapshot = await uploadTask;
         String downloadUrl = await snapshot.ref.getDownloadURL();
 
         setState(() {
@@ -86,6 +133,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             _profilePhotos.add(downloadUrl);
           }
           _isUploading = false;
+          _uploadProgress = 0.0;
         });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Photo uploaded successfully!')),
@@ -102,7 +150,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
   }
 
-
   Future<void> _saveProfile() async {
     if (_formKey.currentState!.validate()) {
       setState(() {
@@ -112,15 +159,26 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       final userService = Provider.of<UserService>(context, listen: false);
 
       try {
-        User updatedUser = widget.currentUser.copyWith(
-          bio: _bioController.text.trim(),
-          age: int.tryParse(_ageController.text.trim()),
-          gender: _selectedGender,
-          genderPreference: _selectedGenderPreference,
-          profilePhotos: _profilePhotos,
-        );
+        // Update core fields
+        final Map<String, dynamic> updates = {
+          'displayName': _displayNameController.text.trim(),
+          'college': _collegeController.text.trim(),
+          'bio': _bioController.text.trim(),
+          'age': int.tryParse(_ageController.text.trim()),
+          'gender': _selectedGender,
+          'genderPreference': _selectedGenderPreference,
+          'profilePhotos': _profilePhotos,
+        };
 
-        await userService.updateUser(updatedUser);
+        // Socials stored under prompts.<key>
+        updates['prompts'] = {
+          ...widget.currentUser.prompts,
+          'snapchat': _snapchatController.text.trim(),
+          'instagram': _instagramController.text.trim(),
+          'discord': _discordController.text.trim(),
+        };
+
+        await userService.updateUserFields(widget.currentUser.uid, updates);
 
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Profile updated successfully!')),
@@ -147,10 +205,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
     final double fixedBottomBuffer = 60.0;
 
-
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Edit Profile', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        title: const Text('Edit Profile',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        centerTitle: true,
         backgroundColor: Colors.transparent,
         elevation: 0,
         iconTheme: const IconThemeData(color: Colors.white),
@@ -173,38 +232,30 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Display Name (Read-Only)
-                    TextFormField(
-                      controller: _displayNameController,
-                      readOnly: true,
-                      decoration: InputDecoration(
-                        labelText: 'Display Name',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                        prefixIcon: const Icon(Icons.person, color: Colors.white),
-                        labelStyle: const TextStyle(color: Colors.white70),
-                        hintStyle: const TextStyle(color: Colors.white54),
-                        enabledBorder: OutlineInputBorder(
-                          borderSide: const BorderSide(color: Colors.white54),
-                          borderRadius: BorderRadius.circular(12),
+                    // Heading
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 20.0, vertical: 6.0),
+                      child: const Text(
+                        'Edit Profile',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
                         ),
-                        focusedBorder: OutlineInputBorder(
-                          borderSide: const BorderSide(color: Colors.white),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        filled: true,
-                        fillColor: Colors.white.withOpacity(0.1),
                       ),
-                      style: const TextStyle(color: Colors.white),
                     ),
                     const SizedBox(height: 16),
-                    // College (Read-Only)
+                    // Display Name
                     TextFormField(
-                      controller: _collegeController,
-                      readOnly: true,
+                      controller: _displayNameController,
                       decoration: InputDecoration(
-                        labelText: 'College',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                        prefixIcon: const Icon(Icons.school, color: Colors.white),
+                        labelText: 'Display Name',
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        prefixIcon:
+                            const Icon(Icons.person, color: Colors.white),
                         labelStyle: const TextStyle(color: Colors.white70),
                         hintStyle: const TextStyle(color: Colors.white54),
                         enabledBorder: OutlineInputBorder(
@@ -219,6 +270,35 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         fillColor: Colors.white.withOpacity(0.1),
                       ),
                       style: const TextStyle(color: Colors.white),
+                      validator: (value) =>
+                          value!.isEmpty ? 'Please enter your name' : null,
+                    ),
+                    const SizedBox(height: 16),
+                    // College
+                    TextFormField(
+                      controller: _collegeController,
+                      decoration: InputDecoration(
+                        labelText: 'College',
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        prefixIcon:
+                            const Icon(Icons.school, color: Colors.white),
+                        labelStyle: const TextStyle(color: Colors.white70),
+                        hintStyle: const TextStyle(color: Colors.white54),
+                        enabledBorder: OutlineInputBorder(
+                          borderSide: const BorderSide(color: Colors.white54),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderSide: const BorderSide(color: Colors.white),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.1),
+                      ),
+                      style: const TextStyle(color: Colors.white),
+                      validator: (value) =>
+                          value!.isEmpty ? 'Please enter your college' : null,
                     ),
                     const SizedBox(height: 16),
                     // Other editable fields (Bio, Age, Gender, Photos)
@@ -226,8 +306,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       controller: _bioController,
                       decoration: InputDecoration(
                         labelText: 'Bio',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                        prefixIcon: const Icon(Icons.info_outline, color: Colors.white),
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        prefixIcon:
+                            const Icon(Icons.info_outline, color: Colors.white),
                         labelStyle: const TextStyle(color: Colors.white70),
                         hintStyle: const TextStyle(color: Colors.white54),
                         enabledBorder: OutlineInputBorder(
@@ -243,14 +325,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       ),
                       style: const TextStyle(color: Colors.white),
                       maxLines: 3,
-                      validator: (value) => value!.isEmpty ? 'Please enter your bio' : null,
+                      validator: (value) =>
+                          value!.isEmpty ? 'Please enter your bio' : null,
                     ),
                     const SizedBox(height: 16),
                     TextFormField(
                       controller: _ageController,
                       decoration: InputDecoration(
                         labelText: 'Age',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12)),
                         prefixIcon: const Icon(Icons.cake, color: Colors.white),
                         labelStyle: const TextStyle(color: Colors.white70),
                         hintStyle: const TextStyle(color: Colors.white54),
@@ -272,7 +356,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       style: const TextStyle(color: Colors.white),
                       validator: (value) {
                         if (value!.isEmpty) return 'Please enter your age';
-                        if (int.tryParse(value) == null) return 'Please enter a valid number';
+                        if (int.tryParse(value) == null)
+                          return 'Please enter a valid number';
                         return null;
                       },
                     ),
@@ -281,8 +366,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       value: _selectedGender,
                       decoration: InputDecoration(
                         labelText: 'Gender',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                        prefixIcon: const Icon(Icons.people, color: Colors.white),
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        prefixIcon:
+                            const Icon(Icons.people, color: Colors.white),
                         labelStyle: const TextStyle(color: Colors.white70),
                         hintStyle: const TextStyle(color: Colors.white54),
                         enabledBorder: OutlineInputBorder(
@@ -296,14 +383,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         filled: true,
                         fillColor: Colors.white.withOpacity(0.1),
                       ),
-                      hint: const Text('Select Gender', style: TextStyle(color: Colors.white54)),
+                      hint: const Text('Select Gender',
+                          style: TextStyle(color: Colors.white54)),
                       dropdownColor: Colors.black.withOpacity(0.8),
                       style: const TextStyle(color: Colors.white),
                       items: const <String>['Male', 'Female', 'Non-binary']
                           .map<DropdownMenuItem<String>>((String value) {
                         return DropdownMenuItem<String>(
                           value: value,
-                          child: Text(value, style: const TextStyle(color: Colors.white)),
+                          child: Text(value,
+                              style: const TextStyle(color: Colors.white)),
                         );
                       }).toList(),
                       onChanged: (String? newValue) {
@@ -311,15 +400,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           _selectedGender = newValue;
                         });
                       },
-                      validator: (value) => value == null ? 'Please select your gender' : null,
+                      validator: (value) =>
+                          value == null ? 'Please select your gender' : null,
                     ),
                     const SizedBox(height: 16),
                     DropdownButtonFormField<String>(
                       value: _selectedGenderPreference,
                       decoration: InputDecoration(
                         labelText: 'Looking For',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                        prefixIcon: const Icon(Icons.favorite_border, color: Colors.white),
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        prefixIcon: const Icon(Icons.favorite_border,
+                            color: Colors.white),
                         labelStyle: const TextStyle(color: Colors.white70),
                         hintStyle: const TextStyle(color: Colors.white54),
                         enabledBorder: OutlineInputBorder(
@@ -333,14 +425,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         filled: true,
                         fillColor: Colors.white.withOpacity(0.1),
                       ),
-                      hint: const Text('Select Preference', style: TextStyle(color: Colors.white54)),
+                      hint: const Text('Select Preference',
+                          style: TextStyle(color: Colors.white54)),
                       dropdownColor: Colors.black.withOpacity(0.8),
                       style: const TextStyle(color: Colors.white),
                       items: const <String>['Male', 'Female', 'Both']
                           .map<DropdownMenuItem<String>>((String value) {
                         return DropdownMenuItem<String>(
                           value: value,
-                          child: Text(value, style: const TextStyle(color: Colors.white)),
+                          child: Text(value,
+                              style: const TextStyle(color: Colors.white)),
                         );
                       }).toList(),
                       onChanged: (String? newValue) {
@@ -348,7 +442,82 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           _selectedGenderPreference = newValue;
                         });
                       },
-                      validator: (value) => value == null ? 'Please select who you are looking for' : null,
+                      validator: (value) => value == null
+                          ? 'Please select who you are looking for'
+                          : null,
+                    ),
+                    const SizedBox(height: 24),
+                    // Socials (no TikTok)
+                    const Text('Socials',
+                        style: TextStyle(color: Colors.white70, fontSize: 16)),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      controller: _snapchatController,
+                      decoration: InputDecoration(
+                        labelText: 'Snapchat',
+                        prefixIcon: const Icon(Icons.chat_bubble_outline,
+                            color: Colors.white),
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        labelStyle: const TextStyle(color: Colors.white70),
+                        enabledBorder: OutlineInputBorder(
+                          borderSide: const BorderSide(color: Colors.white54),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderSide: const BorderSide(color: Colors.white),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.1),
+                      ),
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _instagramController,
+                      decoration: InputDecoration(
+                        labelText: 'Instagram',
+                        prefixIcon: const Icon(Icons.photo_camera_outlined,
+                            color: Colors.white),
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        labelStyle: const TextStyle(color: Colors.white70),
+                        enabledBorder: OutlineInputBorder(
+                          borderSide: const BorderSide(color: Colors.white54),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderSide: const BorderSide(color: Colors.white),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.1),
+                      ),
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _discordController,
+                      decoration: InputDecoration(
+                        labelText: 'Discord',
+                        prefixIcon: const Icon(Icons.forum_outlined,
+                            color: Colors.white),
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        labelStyle: const TextStyle(color: Colors.white70),
+                        enabledBorder: OutlineInputBorder(
+                          borderSide: const BorderSide(color: Colors.white54),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderSide: const BorderSide(color: Colors.white),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.1),
+                      ),
+                      style: const TextStyle(color: Colors.white),
                     ),
                     const SizedBox(height: 24),
                     Center(
@@ -357,26 +526,29 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         backgroundColor: Colors.white.withOpacity(0.2),
                         backgroundImage: _profilePhotos.isNotEmpty
                             ? NetworkImage(_profilePhotos[0])
-                            : null,
-                        child: _profilePhotos.isEmpty
-                            ? const Icon(Icons.account_circle, size: 80, color: Colors.white70)
-                            : null,
+                            : const AssetImage('assets/defaultpfp.png')
+                                as ImageProvider,
+                        child: null,
                       ),
                     ),
                     const SizedBox(height: 16),
                     ElevatedButton.icon(
-                      onPressed: (_isSaving || _isUploading) ? null : _pickImage,
+                      onPressed:
+                          (_isSaving || _isUploading) ? null : _pickImage,
                       icon: const Icon(Icons.camera_alt, color: Colors.white),
-                      label: const Text('Upload Profile Photo', style: TextStyle(color: Colors.white)),
+                      label: const Text('Upload Profile Photo',
+                          style: TextStyle(color: Colors.white)),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppTheme.lightTheme.primaryColor,
                         padding: const EdgeInsets.symmetric(vertical: 15),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(30)),
                       ),
                     ),
                     const SizedBox(height: 24),
                     ElevatedButton(
-                      onPressed: (_isSaving || _isUploading) ? null : _saveProfile,
+                      onPressed:
+                          (_isSaving || _isUploading) ? null : _saveProfile,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppTheme.lightTheme.primaryColor,
                         padding: const EdgeInsets.symmetric(vertical: 15),
@@ -403,19 +575,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             Positioned.fill(
               child: Container(
                 color: Colors.black54,
-                child: const Center(
+                child: Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      CircularProgressIndicator(color: Colors.white),
-                      SizedBox(height: 20),
+                      const CircularProgressIndicator(color: Colors.white),
+                      const SizedBox(height: 12),
                       Text(
-                        'Optimizing photo...',
-                        style: TextStyle(color: Colors.white70, fontSize: 16),
-                      ),
-                      Text(
-                        'Uploading...',
-                        style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                        'Uploading ${(100 * _uploadProgress).toStringAsFixed(0)}%',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600),
                       ),
                     ],
                   ),

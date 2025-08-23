@@ -31,6 +31,8 @@ class User {
   final bool isOnline;
   final Timestamp? lastActive;
   final String role;
+  final bool isVerified;
+  final List<String> mediaUrls;
 
   User({
     required this.uid,
@@ -61,6 +63,8 @@ class User {
     this.isOnline = false,
     this.lastActive,
     this.role = 'user',
+    this.isVerified = false,
+    this.mediaUrls = const [],
   });
 
   factory User.fromFirestore(DocumentSnapshot doc) {
@@ -94,6 +98,8 @@ class User {
       isOnline: data['isOnline'] ?? false,
       lastActive: data['lastActive'] as Timestamp?,
       role: data['role'] ?? 'user',
+      isVerified: data['isVerified'] ?? false,
+      mediaUrls: List<String>.from(data['mediaUrls'] ?? []),
     );
   }
 
@@ -101,6 +107,9 @@ class User {
     return {
       'uid': uid,
       'email': email,
+      // Normalized fields for efficient search
+      'emailLower': email.toLowerCase(),
+      'displayNameLower': (displayName ?? '').toLowerCase(),
       'displayName': displayName,
       'bio': bio,
       'profilePhotos': profilePhotos,
@@ -127,6 +136,8 @@ class User {
       'isOnline': isOnline,
       'lastActive': lastActive,
       'role': role,
+      'isVerified': isVerified,
+      'mediaUrls': mediaUrls,
     };
   }
 
@@ -159,6 +170,8 @@ class User {
     bool? isOnline,
     Timestamp? lastActive,
     String? role,
+    bool? isVerified,
+    List<String>? mediaUrls,
   }) {
     return User(
       uid: uid ?? this.uid,
@@ -185,10 +198,13 @@ class User {
       genderPreference: genderPreference ?? this.genderPreference,
       minAgePreference: minAgePreference ?? this.minAgePreference,
       maxAgePreference: maxAgePreference ?? this.maxAgePreference,
-      maxDistancePreference: maxDistancePreference ?? this.maxDistancePreference,
+      maxDistancePreference:
+          maxDistancePreference ?? this.maxDistancePreference,
       isOnline: isOnline ?? this.isOnline,
       lastActive: lastActive ?? this.lastActive,
       role: role ?? this.role,
+      isVerified: isVerified ?? this.isVerified,
+      mediaUrls: mediaUrls ?? this.mediaUrls,
     );
   }
 }

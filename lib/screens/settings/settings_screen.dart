@@ -3,19 +3,25 @@ import 'package:campus_crush/services/auth_service.dart';
 import 'package:campus_crush/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+// import 'package:google_fonts/google_fonts.dart';
 import 'package:campus_crush/services/user_service.dart';
 import 'package:campus_crush/models/user_model.dart';
+import 'package:campus_crush/widgets/verification_badge.dart';
+import 'package:campus_crush/utils/user_verification.dart';
 import 'dart:math' as math;
-
 
 class SettingsScreen extends StatefulWidget {
   @override
   _SettingsScreenState createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+class _SettingsScreenState extends State<SettingsScreen>
+    with AutomaticKeepAliveClientMixin {
   User? _currentUser;
   bool _isLoadingUser = true;
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -54,13 +60,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // Required for AutomaticKeepAliveClientMixin
     final authService = Provider.of<AuthService>(context);
-    final double topContentPadding = MediaQuery.of(context).padding.top + AppBar().preferredSize.height + 16.0;
-
+    final double topContentPadding = MediaQuery.of(context).padding.top +
+        AppBar().preferredSize.height +
+        16.0;
 
     return Scaffold(
       appBar: null, // Removed AppBar from SettingsScreen to prevent conflicts
-      backgroundColor: Colors.transparent, // Set to transparent to see HomeScreen's background
+      backgroundColor: Colors
+          .transparent, // Set to transparent to see HomeScreen's background
       body: _isLoadingUser
           ? Center(
               child: CircularProgressIndicator(
@@ -68,24 +77,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             )
           : SingleChildScrollView(
-              padding: EdgeInsets.only(top: topContentPadding, bottom: 16.0), // Padding to push content below the HomeScreens's AppBar
+              padding: EdgeInsets.only(
+                  top: topContentPadding,
+                  bottom:
+                      16.0), // Padding to push content below the HomeScreens's AppBar
               child: Column(
                 children: [
-                  // This title will now scroll with the content
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 10.0),
-                    child: Text(
-                      'Settings',
-                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
-                    ),
-                  ),
                   const SizedBox(height: 10),
                   if (_currentUser != null)
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 10.0),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 20.0, vertical: 10.0),
                       child: AspectRatio(
                         aspectRatio: 0.8,
                         child: _buildProfileCard(context, _currentUser!),
@@ -94,63 +96,67 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   else
                     const SizedBox.shrink(),
                   const SizedBox(height: 20),
-
                   ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                    leading: const Icon(Icons.person, color: Colors.white, size: 28),
-                    title: const Text('Edit Profile', style: TextStyle(color: Colors.white, fontSize: 18)),
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                    leading:
+                        const Icon(Icons.person, color: Colors.white, size: 28),
+                    title: const Text('Edit Profile',
+                        style: TextStyle(color: Colors.white, fontSize: 18)),
                     onTap: () async {
                       final currentFirebaseUser = authService.currentUser;
                       if (currentFirebaseUser != null) {
-                        final userService = Provider.of<UserService>(context, listen: false);
-                        final currentUserModel = await userService.getUser(currentFirebaseUser.uid);
+                        final userService =
+                            Provider.of<UserService>(context, listen: false);
+                        final currentUserModel =
+                            await userService.getUser(currentFirebaseUser.uid);
                         if (currentUserModel != null) {
-                          await Navigator.pushNamed(context, '/edit_profile', arguments: currentUserModel);
+                          await Navigator.pushNamed(context, '/edit_profile',
+                              arguments: currentUserModel);
                           _fetchCurrentUserProfile();
                         } else {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Failed to load profile data.')),
+                            const SnackBar(
+                                content: Text('Failed to load profile data.')),
                           );
                         }
                       } else {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('You need to be logged in to edit your profile.')),
+                          const SnackBar(
+                              content: Text(
+                                  'You need to be logged in to edit your profile.')),
                         );
                         Navigator.of(context).pushReplacementNamed('/login');
                       }
                     },
                   ),
                   ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                    leading: const Icon(Icons.notifications, color: Colors.white, size: 28),
-                    title: const Text('Notification Settings', style: TextStyle(color: Colors.white, fontSize: 18)),
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                    leading: const Icon(Icons.notifications,
+                        color: Colors.white, size: 28),
+                    title: const Text('Notification Settings',
+                        style: TextStyle(color: Colors.white, fontSize: 18)),
                     onTap: () {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Notification Settings (Coming Soon!)')),
+                        const SnackBar(
+                            content:
+                                Text('Notification Settings (Coming Soon!)')),
                       );
                     },
                   ),
                   ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                    leading: const Icon(Icons.security, color: Colors.white, size: 28),
-                    title: const Text('Privacy Policy', style: TextStyle(color: Colors.white, fontSize: 18)),
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                    leading: const Icon(Icons.security,
+                        color: Colors.white, size: 28),
+                    title: const Text('Privacy Policy',
+                        style: TextStyle(color: Colors.white, fontSize: 18)),
                     onTap: () {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Privacy Policy (Coming Soon!)')),
+                        const SnackBar(
+                            content: Text('Privacy Policy (Coming Soon!)')),
                       );
-                    },
-                  ),
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                    child: Divider(color: Colors.white54, thickness: 1.5),
-                  ),
-                  ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                    leading: const Icon(Icons.logout, color: Colors.red, size: 28),
-                    title: const Text('Logout', style: TextStyle(color: Colors.white, fontSize: 18)),
-                    onTap: () async {
-                      await authService.signOut();
-                      Navigator.of(context).pushReplacementNamed('/login');
                     },
                   ),
                 ],
@@ -162,7 +168,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _buildProfileCard(BuildContext context, User user) {
     final String imageUrl = user.profilePhotos.isNotEmpty
         ? user.profilePhotos[0]
-        : 'assets/default_avatar.png';
+        : 'assets/defaultpfp.png';
 
     return Card(
       elevation: 8.0,
@@ -179,12 +185,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               return Center(
                 child: CircularProgressIndicator(
                   value: loadingProgress.expectedTotalBytes != null
-                      ? loadingProgress.cumulativeBytesLoaded / loadingProgress.expectedTotalBytes!
+                      ? loadingProgress.cumulativeBytesLoaded /
+                          loadingProgress.expectedTotalBytes!
                       : null,
                 ),
               );
             },
-            errorBuilder: (context, error, stackTrace) => Image.asset('assets/default_avatar.png', fit: BoxFit.cover),
+            errorBuilder: (context, error, stackTrace) =>
+                Image.asset('assets/defaultpfp.png', fit: BoxFit.cover),
           ),
           Container(
             decoration: BoxDecoration(
@@ -202,13 +210,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  '${user.displayName ?? 'N/A'}, ${user.age ?? ''}',
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontFamily: 'Poppins',
-                      ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '${user.displayName ?? 'N/A'}, ${user.age ?? ''}',
+                      style:
+                          Theme.of(context).textTheme.headlineMedium?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontFamily: Theme.of(context)
+                                    .textTheme
+                                    .bodyLarge
+                                    ?.fontFamily,
+                              ),
+                    ),
+                    const SizedBox(width: 8),
+                    VerificationBadge(
+                      isVerified:
+                          UserVerification.getDisplayVerificationStatus(user),
+                      size: 20,
+                    ),
+                  ],
                 ),
                 if (user.college != null && user.college!.isNotEmpty)
                   Padding(
@@ -240,7 +263,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   user.bio ?? 'No bio available.',
                   style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                         color: Colors.white.withOpacity(0.9),
-                        fontFamily: 'IndieFlower',
+                        fontFamily:
+                            Theme.of(context).textTheme.bodyLarge?.fontFamily,
                       ),
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
