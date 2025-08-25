@@ -256,7 +256,6 @@ class OfflineService {
     final jsonData = _queuedActions.map((action) => action.toJson()).toList();
     await prefs.setString(_queuedActionsKey, jsonEncode(jsonData));
   }
-
   Future<void> _saveCachedChats() async {
     final prefs = await SharedPreferences.getInstance();
     final jsonData = <String, dynamic>{};

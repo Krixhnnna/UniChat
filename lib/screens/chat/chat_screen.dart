@@ -110,55 +110,71 @@ class _ChatScreenState extends State<ChatScreen>
       // Listen to messages from Firebase
       _databaseService
           .getMessages(_currentUserId!, widget.otherUser.uid)
-          .listen((messages) {
-        if (mounted) {
-          print('DEBUG: Messages stream received ${messages.length} messages');
-          if (messages.isNotEmpty) {
-            print(
-                'DEBUG: First message: "${messages.first.content}" at ${messages.first.timestamp}');
-            print(
-                'DEBUG: Last message: "${messages.last.content}" at ${messages.last.timestamp}');
-          }
+          .listen(
+        (messages) {
+          if (mounted) {
+            print('DEBUG: Messages stream received ${messages.length} messages');
+            if (messages.isNotEmpty) {
+              print(
+                  'DEBUG: First message: "${messages.first.content}" at ${messages.first.timestamp}');
+              print(
+                  'DEBUG: Last message: "${messages.last.content}" at ${messages.last.timestamp}');
+            }
 
-          final bool isFirstLoad = _messages.isEmpty && messages.isNotEmpty;
-          final bool hasNewMessages = messages.isNotEmpty &&
-              (_messages.isEmpty ||
-                  messages.first.timestamp.isAfter(_messages.first.timestamp));
+            final bool isFirstLoad = _messages.isEmpty && messages.isNotEmpty;
+            final bool hasNewMessages = messages.isNotEmpty &&
+                (_messages.isEmpty ||
+                    messages.first.timestamp.isAfter(_messages.first.timestamp));
 
-          setState(() {
-            // Messages come from Firebase in descending order (newest first)
-            // But we need to display them in ascending order (oldest first) for chat UI
-            _messages = messages.reversed.toList();
-            _isLoading = false; // Set loading to false when messages arrive
-          });
+            setState(() {
+              // Messages come from Firebase in descending order (newest first)
+              // But we need to display them in ascending order (oldest first) for chat UI
+              _messages = messages.reversed.toList();
+              _isLoading = false; // Set loading to false when messages arrive
+            });
 
-          // Scroll to bottom only when opening a chat or when new messages arrive
-          if (isFirstLoad) {
-            print('Chat: First load - scrolling to bottom');
-            _scrollToBottom();
-          } else if (hasNewMessages) {
-            print('Chat: New messages - scrolling to bottom');
-            _scrollToBottom();
-          }
+            // Scroll to bottom only when opening a chat or when new messages arrive
+            if (isFirstLoad) {
+              print('Chat: First load - scrolling to bottom');
+              _scrollToBottom();
+            } else if (hasNewMessages) {
+              print('Chat: New messages - scrolling to bottom');
+              _scrollToBottom();
+            }
 
-          // Mark messages as read when new messages arrive (user is viewing the chat)
-          if (hasNewMessages) {
-            // Check if the new messages are from the other user (not our own messages)
-            final newMessagesFromOther = messages
-                .where((msg) => msg.senderId != _currentUserId && !msg.isRead)
-                .isNotEmpty;
+            // Mark messages as read when new messages arrive (user is viewing the chat)
+            if (hasNewMessages) {
+              // Check if the new messages are from the other user (not our own messages)
+              final newMessagesFromOther = messages
+                  .where((msg) => msg.senderId != _currentUserId && !msg.isRead)
+                  .isNotEmpty;
 
-            if (newMessagesFromOther) {
-              // Delay to ensure message is properly loaded before marking as read
-              Timer(const Duration(milliseconds: 300), () {
-                if (mounted) {
-                  _markMessagesAsRead();
-                }
-              });
+              if (newMessagesFromOther) {
+                // Delay to ensure message is properly loaded before marking as read
+                Timer(const Duration(milliseconds: 300), () {
+                  if (mounted) {
+                    _markMessagesAsRead();
+                  }
+                });
+              }
             }
           }
-        }
-      });
+        },
+        onError: (error) {
+          print('ERROR: Failed to load messages: $error');
+          if (mounted) {
+            setState(() {
+              _isLoading = false;
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Failed to load messages: $error'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        },
+      );
 
       // Listen to other user's online status
       _databaseService.getUserDocument(widget.otherUser.uid).listen((data) {
