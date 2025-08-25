@@ -1522,7 +1522,8 @@ class _ChatScreenState extends State<ChatScreen>
                                     ],
                                   ),
                                 ),
-                              ),
+                                                              ),
+                              ],
                               // Checkmark or profile picture positioned outside the message bubble
                               if (isOwnMessage && isMostRecentOwnMessage)
                                 Positioned(
@@ -1555,7 +1556,6 @@ class _ChatScreenState extends State<ChatScreen>
                                           ),
                                         ),
                                 ),
-                            ],
                             ],
                           ),
                         ),
