@@ -1261,64 +1261,66 @@ class _ChatScreenState extends State<ChatScreen>
                         child: Container(
                           margin: const EdgeInsets.only(
                               bottom: 12), // Reduced from 16 to 12
-                          child: Row(
-                            mainAxisAlignment: isOwnMessage
-                                ? MainAxisAlignment.end
-                                : MainAxisAlignment.start,
-                            crossAxisAlignment: CrossAxisAlignment.end,
+                          child: Stack(
                             children: [
-                              if (_isSelectionMode) ...[
-                                Checkbox(
-                                  value: isSelected,
-                                  onChanged: (value) =>
-                                      _toggleMessageSelection(message.id),
-                                  activeColor: Colors.purple,
-                                ),
-                                const SizedBox(width: 8),
-                              ],
-                              if (!isOwnMessage) ...[
-                                // Profile picture for received messages (left side)
-                                CircleAvatar(
-                                  radius: 16, // Exact size from screenshot
-                                  backgroundImage:
-                                      widget.otherUser.profilePhotos.isNotEmpty
-                                          ? NetworkImage(
-                                              widget.otherUser.profilePhotos[0])
+                              Row(
+                                mainAxisAlignment: isOwnMessage
+                                    ? MainAxisAlignment.end
+                                    : MainAxisAlignment.start,
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  if (_isSelectionMode) ...[
+                                    Checkbox(
+                                      value: isSelected,
+                                      onChanged: (value) =>
+                                          _toggleMessageSelection(message.id),
+                                      activeColor: Colors.purple,
+                                    ),
+                                    const SizedBox(width: 8),
+                                  ],
+                                  if (!isOwnMessage) ...[
+                                    // Profile picture for received messages (left side)
+                                    CircleAvatar(
+                                      radius: 16, // Exact size from screenshot
+                                      backgroundImage:
+                                          widget.otherUser.profilePhotos.isNotEmpty
+                                              ? NetworkImage(
+                                                  widget.otherUser.profilePhotos[0])
+                                              : null,
+                                      child: widget.otherUser.profilePhotos.isEmpty
+                                          ? Text(
+                                              _getDisplayNameInitial(),
+                                              style: const TextStyle(fontSize: 12),
+                                            )
                                           : null,
-                                  child: widget.otherUser.profilePhotos.isEmpty
-                                      ? Text(
-                                          _getDisplayNameInitial(),
-                                          style: const TextStyle(fontSize: 12),
-                                        )
-                                      : null,
-                                ),
-                                const SizedBox(width: 8),
-                              ],
-                              Flexible(
-                                child: Container(
-                                  constraints: const BoxConstraints(
-                                    maxWidth:
-                                        280, // Maximum width to prevent overflow
-                                    minWidth: 0, // Allow shrinking to content
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal:
-                                        8, // Much smaller horizontal padding
-                                    vertical:
-                                        6, // Much smaller vertical padding
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: isOwnMessage
-                                        ? const Color(0xFF8B5CF6) // Purple for sent messages (exact from screenshot)
-                                        : const Color(0xFF1C1C1E), // Dark gray for received messages (exact from screenshot)
-                                    borderRadius: BorderRadius.circular(20),
-                                    border: isDeleted
-                                        ? Border.all(
-                                            color: const Color(0xFF8E8E93),
-                                            style: BorderStyle.solid,
-                                            width: 1)
-                                        : null,
-                                  ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                  ],
+                                  Flexible(
+                                    child: Container(
+                                      constraints: const BoxConstraints(
+                                        maxWidth:
+                                            280, // Maximum width to prevent overflow
+                                        minWidth: 0, // Allow shrinking to content
+                                      ),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal:
+                                            8, // Much smaller horizontal padding
+                                        vertical:
+                                            6, // Much smaller vertical padding
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: isOwnMessage
+                                            ? const Color(0xFF8B5CF6) // Purple for sent messages (exact from screenshot)
+                                            : const Color(0xFF1C1C1E), // Dark gray for received messages (exact from screenshot)
+                                        borderRadius: BorderRadius.circular(20),
+                                        border: isDeleted
+                                            ? Border.all(
+                                                color: const Color(0xFF8E8E93),
+                                                style: BorderStyle.solid,
+                                                width: 1)
+                                            : null,
+                                      ),
                                   child: Column(
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
@@ -1509,14 +1511,7 @@ class _ChatScreenState extends State<ChatScreen>
                                                             11, // Slightly smaller timestamp
                                                       ),
                                                     ),
-                                                    if (isOwnMessage && isMostRecentOwnMessage) ...[
-                                                      const SizedBox(width: 4),
-                                                      Icon(
-                                                        Icons.check_circle,
-                                                        size: 12,
-                                                        color: Colors.white,
-                                                      ),
-                                                    ],
+
                                                   ],
                                                 ),
                                               ],
@@ -1528,9 +1523,38 @@ class _ChatScreenState extends State<ChatScreen>
                                   ),
                                 ),
                               ),
-                              if (isOwnMessage) ...[
-                                // No profile picture for sent messages - cleaner look
-                              ],
+                              // Checkmark or profile picture positioned outside the message bubble
+                              if (isOwnMessage && isMostRecentOwnMessage)
+                                Positioned(
+                                  right: -4,
+                                  bottom: -2,
+                                  child: message.isRead
+                                      ? CircleAvatar(
+                                          radius: 8,
+                                          backgroundImage: widget.otherUser.profilePhotos.isNotEmpty
+                                              ? NetworkImage(widget.otherUser.profilePhotos[0])
+                                              : null,
+                                          child: widget.otherUser.profilePhotos.isEmpty
+                                              ? Text(
+                                                  _getDisplayNameInitial(),
+                                                  style: const TextStyle(fontSize: 8),
+                                                )
+                                              : null,
+                                        )
+                                      : Container(
+                                          width: 16,
+                                          height: 16,
+                                          decoration: BoxDecoration(
+                                            color: Colors.grey[400],
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: const Icon(
+                                            Icons.check,
+                                            size: 10,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                ),
                             ],
                           ),
                         ),
