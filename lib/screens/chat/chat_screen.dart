@@ -1296,10 +1296,8 @@ class _ChatScreenState extends State<ChatScreen>
                                   ),
                                   decoration: BoxDecoration(
                                     color: isOwnMessage
-                                        ? const Color(
-                                            0xFF8B5CF6) // Purple for sent messages (exact from screenshot)
-                                        : const Color(
-                                            0xFF1C1C1E), // Dark gray for received messages (exact from screenshot)
+                                        ? const Color(0xFF8B5CF6) // Purple for sent messages (exact from screenshot)
+                                        : const Color(0xFF1C1C1E), // Dark gray for received messages (exact from screenshot)
                                     borderRadius: BorderRadius.circular(20),
                                     border: isDeleted
                                         ? Border.all(
@@ -1481,19 +1479,32 @@ class _ChatScreenState extends State<ChatScreen>
                                                 const SizedBox(
                                                     width:
                                                         8), // Space between message and timestamp
-                                                Text(
-                                                  _formatTime(
-                                                      message.timestamp),
-                                                  style:
-                                                      AppFonts.caption.copyWith(
-                                                    color: const Color.fromARGB(
-                                                        255,
-                                                        200,
-                                                        200,
-                                                        200), // Lighter gray - slightly duller than white
-                                                    fontSize:
-                                                        11, // Slightly smaller timestamp
-                                                  ),
+                                                Row(
+                                                  mainAxisSize: MainAxisSize.min,
+                                                  children: [
+                                                    Text(
+                                                      _formatTime(
+                                                          message.timestamp),
+                                                      style:
+                                                          AppFonts.caption.copyWith(
+                                                        color: const Color.fromARGB(
+                                                            255,
+                                                            200,
+                                                            200,
+                                                            200), // Lighter gray - slightly duller than white
+                                                        fontSize:
+                                                            11, // Slightly smaller timestamp
+                                                      ),
+                                                    ),
+                                                    if (isOwnMessage) ...[
+                                                      const SizedBox(width: 4),
+                                                      Icon(
+                                                        Icons.check_circle,
+                                                        size: 12,
+                                                        color: Colors.white,
+                                                      ),
+                                                    ],
+                                                  ],
                                                 ),
                                               ],
                                             ),
@@ -1677,15 +1688,22 @@ class _ChatScreenState extends State<ChatScreen>
                             ),
                           ),
                         )
-                      : Row(
+                                              : Row(
                           children: [
-                            // Camera icon inside the background
+                            // Aa icon (text formatting) on the left
                             IconButton(
-                              icon: const Icon(Icons.camera_alt,
-                                  color: Colors.white, size: 20),
-                              onPressed: _sendImage,
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
+                              icon: const Text(
+                                'Aa',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              onPressed: () {
+                                // TODO: Implement text formatting
+                              },
+                              padding: const EdgeInsets.all(8),
                             ),
                             const SizedBox(width: 8),
                             // Message input field
@@ -1698,8 +1716,7 @@ class _ChatScreenState extends State<ChatScreen>
                                 decoration: InputDecoration(
                                   hintText: 'Message...',
                                   hintStyle: const TextStyle(
-                                    color: Color(
-                                        0xFF8E8E93), // Light gray hint color
+                                    color: Color(0xFF8E8E93), // Light gray hint color
                                   ),
                                   border: InputBorder.none,
                                   contentPadding: EdgeInsets.zero,
@@ -1721,49 +1738,39 @@ class _ChatScreenState extends State<ChatScreen>
                                 },
                               ),
                             ),
-                            // Right-side icons inside the same container - only show when not typing
-                            if (_messageController.text.isEmpty) ...[
-                              IconButton(
-                                icon: const Icon(Icons.mic,
-                                    color: Colors.white, size: 24),
-                                onPressed: _startRecording,
-                                padding: const EdgeInsets.all(8),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.photo_library,
-                                    color: Colors.white, size: 24),
-                                onPressed: _sendImage,
-                                padding: const EdgeInsets.all(8),
-                              ),
-                              IconButton(
-                                icon: SvgPicture.string(
-                                  '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <path d="M8.5 11C9.32843 11 10 10.3284 10 9.5C10 8.67157 9.32843 8 8.5 8C7.67157 8 7 8.67157 7 9.5C7 10.3284 7.67157 11 8.5 11Z" fill="#0F0F0F"></path> <path d="M17 9.5C17 10.3284 16.3284 11 15.5 11C14.6716 11 14 10.3284 14 9.5C14 8.67157 14.6716 8 15.5 8C16.3284 8 17 8.67157 17 9.5Z" fill="#0F0F0F"></path> <path fill-rule="evenodd" clip-rule="evenodd" d="M8.2 13C7.56149 13 6.9436 13.5362 7.01666 14.2938C7.06054 14.7489 7.2324 15.7884 7.95483 16.7336C8.71736 17.7313 9.99938 18.5 12 18.5C14.0006 18.5 15.2826 17.7313 16.0452 16.7336C16.7676 15.7884 16.9395 14.7489 16.9833 14.2938C17.0564 13.5362 16.4385 13 15.8 13H8.2ZM9.54387 15.5191C9.41526 15.3509 9.31663 15.1731 9.2411 15H14.7589C14.6834 15.1731 14.5847 15.3509 14.4561 15.5191C14.0981 15.9876 13.4218 16.5 12 16.5C10.5782 16.5 9.90187 15.9876 9.54387 15.5191Z" fill="#0F0F0F"></path> <path fill-rule="evenodd" clip-rule="evenodd" d="M12 23C18.0751 23 23 18.0751 23 12C23 5.92487 18.0751 1 12 1C5.92487 1 1 5.92487 1 12C1 18.0751 5.92487 23 12 23ZM12 20.9932C7.03321 20.9932 3.00683 16.9668 3.00683 12C3.00683 7.03321 7.03321 3.00683 12 3.00683C16.9668 3.00683 20.9932 7.03321 20.9932 12C20.9932 16.9668 16.9668 20.9932 12 20.9932Z" fill="#0F0F0F"></path> </g></svg>',
-                                  width: 24,
-                                  height: 24,
-                                  colorFilter: const ColorFilter.mode(
-                                      Colors.white, BlendMode.srcIn),
-                                ),
-                                onPressed: () {
-                                  // TODO: Implement emoji picker
-                                },
-                                padding: const EdgeInsets.all(8),
-                              ),
-                            ] else ...[
-                              // Send button when typing
-                              Container(
-                                decoration: BoxDecoration(
-                                  color: const Color(
-                                      0xFF8B5CF6), // Purple background
-                                  borderRadius: BorderRadius.circular(20),
-                                ),
-                                child: IconButton(
-                                  icon: const Icon(Icons.send,
-                                      color: Colors.white, size: 20),
-                                  onPressed: _sendMessage,
-                                  padding: const EdgeInsets.all(8),
+                            // Right-side icons inside the same container
+                            IconButton(
+                              icon: const Icon(Icons.camera_alt,
+                                  color: Colors.white, size: 20),
+                              onPressed: _sendImage,
+                              padding: const EdgeInsets.all(8),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.photo_library,
+                                  color: Colors.white, size: 20),
+                              onPressed: _sendImage,
+                              padding: const EdgeInsets.all(8),
+                            ),
+                            IconButton(
+                              icon: const Text(
+                                'GIF',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
-                            ],
+                              onPressed: () {
+                                // TODO: Implement GIF picker
+                              },
+                              padding: const EdgeInsets.all(8),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.mic,
+                                  color: Colors.white, size: 20),
+                              onPressed: _startRecording,
+                              padding: const EdgeInsets.all(8),
+                            ),
                           ],
                         ),
                 ),
