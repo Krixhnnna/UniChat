@@ -1072,6 +1072,18 @@ class _ChatScreenState extends State<ChatScreen>
     // Combine messages in correct order: _messages (old to new) + optimistic messages (newest)
     final allMessages = [..._messages, ...pendingOptimisticMessages];
 
+    // Find the most recent message sent by the current user
+    Message? mostRecentOwnMessage;
+    if (_currentUserId != null && allMessages.isNotEmpty) {
+      final ownMessages = allMessages
+          .where((msg) => msg.senderId == _currentUserId)
+          .toList();
+      if (ownMessages.isNotEmpty) {
+        ownMessages.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+        mostRecentOwnMessage = ownMessages.first;
+      }
+    }
+
     // Ensure scroll to bottom after building messages list
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && allMessages.isNotEmpty) {
@@ -1146,6 +1158,7 @@ class _ChatScreenState extends State<ChatScreen>
                   _currentUserId != null && message.senderId == _currentUserId;
               final isSelected = _selectedMessageIds.contains(message.id);
               final isDeleted = message.content == 'This message was deleted';
+              final isMostRecentOwnMessage = mostRecentOwnMessage?.id == message.id;
 
               return Stack(
                 children: [
@@ -1496,7 +1509,7 @@ class _ChatScreenState extends State<ChatScreen>
                                                             11, // Slightly smaller timestamp
                                                       ),
                                                     ),
-                                                    if (isOwnMessage) ...[
+                                                    if (isOwnMessage && isMostRecentOwnMessage) ...[
                                                       const SizedBox(width: 4),
                                                       Icon(
                                                         Icons.check_circle,
