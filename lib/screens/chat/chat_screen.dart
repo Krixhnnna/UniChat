@@ -12,9 +12,14 @@ import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-// import 'package:record/record.dart' as audio_rec;
+// import 'package:record/record.dart'; // Temporarily disabled due to build issues
 
 import 'package:audioplayers/audioplayers.dart';
+import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
+// import 'package:geolocator/geolocator.dart'; // Temporarily disabled
+// import 'package:file_picker/file_picker.dart'; // Temporarily disabled
+// import 'package:contacts_service/contacts_service.dart'; // Temporarily disabled
+// import 'package:permission_handler/permission_handler.dart'; // Temporarily disabled
 import '../../theme/app_fonts.dart';
 import '../../widgets/verification_badge.dart';
 import '../../utils/user_verification.dart';
@@ -42,10 +47,18 @@ class _ChatScreenState extends State<ChatScreen>
   List<Message> _optimisticMessages = [];
   bool _isLoading = false;
   String? _currentUserId;
+  bool _isOfflineMode = false;
   bool _isTyping = false;
   Timer? _typingTimer;
   bool _isOtherUserOnline = false;
   DateTime? _otherUserLastSeen;
+  
+  // Animation controllers
+  late AnimationController _inputAnimationController;
+  late Animation<double> _inputSlideAnimation;
+  late Animation<double> _inputScaleAnimation;
+  late AnimationController _emojiAnimationController;
+  late Animation<double> _emojiSlideAnimation;
 
   // Multi-select functionality
   bool _isSelectionMode = false;
@@ -63,8 +76,8 @@ class _ChatScreenState extends State<ChatScreen>
   final Map<String, double> _messageOffsets =
       {}; // Track offset for each message
 
-  // Audio recording
-  // final audio_rec.Record _recorder = audio_rec.Record();
+  // Audio recording (temporarily disabled)
+  // Record? _recorder;
   bool _isRecording = false;
   Timer? _recordTimer;
   Duration _recordDuration = Duration.zero;
@@ -83,10 +96,66 @@ class _ChatScreenState extends State<ChatScreen>
   bool _isItalic = false;
   bool _isUnderline = false;
 
+  // Attachment menu
+  bool _showAttachmentMenu = false;
+
+  // Emoji picker
+  bool _showEmojiPicker = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    
+    // Force disable selection mode on init
+    _isSelectionMode = false;
+    _selectedMessageIds.clear();
+    
+    // Audio recorder initialization (temporarily disabled)
+    // _recorder = Record();
+    
+    // Initialize animation controllers
+    _inputAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 300),
+      vsync: this,
+    );
+    
+    _inputSlideAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _inputAnimationController,
+      curve: Curves.easeOutCubic,
+    ));
+    
+    _inputScaleAnimation = Tween<double>(
+      begin: 0.8,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _inputAnimationController,
+      curve: Curves.easeOutBack,
+    ));
+    
+    // Initialize emoji animation controller
+    _emojiAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 250),
+      vsync: this,
+    );
+    
+    _emojiSlideAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _emojiAnimationController,
+      curve: Curves.easeOutCubic,
+    ));
+    
+    // Start the animation
+    _inputAnimationController.forward();
+    
+    // Add focus listener for input animations
+    _messageFocusNode.addListener(_onFocusChange);
+    
     _initializeChat();
 
     // Add scroll listener to detect user interactions
@@ -116,8 +185,14 @@ class _ChatScreenState extends State<ChatScreen>
         setState(() {
           _currentUserId = user.uid;
           _isLoading = true; // Set loading to true initially
+          // Exit selection mode when initializing chat
+          _isSelectionMode = false;
+          _selectedMessageIds.clear();
         });
       }
+
+      // Try to load mock data first for testing
+      _loadMockData();
 
       // Listen to messages from Firebase
       _databaseService
@@ -184,10 +259,28 @@ class _ChatScreenState extends State<ChatScreen>
             setState(() {
               _isLoading = false;
             });
+            
+            // Check if it's a network error
+            String errorMessage = 'Failed to load messages';
+            if (error.toString().contains('UNAVAILABLE') || 
+                error.toString().contains('Unable to resolve host')) {
+              errorMessage = 'No internet connection. Please check your network.';
+            } else {
+              errorMessage = 'Failed to load messages: $error';
+            }
+            
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('Failed to load messages: $error'),
+                content: Text(errorMessage),
                 backgroundColor: Colors.red,
+                duration: const Duration(seconds: 5),
+                action: SnackBarAction(
+                  label: 'Retry',
+                  textColor: Colors.white,
+                  onPressed: () {
+                    _initializeChat();
+                  },
+                ),
               ),
             );
           }
@@ -226,11 +319,93 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Future<void> _startRecording() async {
-    // TODO: Implement audio recording when record package is available
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Audio recording not available yet')),
+    // Show voice message input dialog
+    final voiceMessage = await _showVoiceMessageDialog();
+    
+    if (voiceMessage != null && _currentUserId != null) {
+      // Send voice message as text
+      await _databaseService.sendMessage(
+        _currentUserId!,
+        widget.otherUser.uid,
+        '🎤 Voice Message: $voiceMessage',
+        replyToMessageId: _replyingToMessage?.id,
+        replyToContent: _replyingToMessage?.content,
+        replyToSenderId: _replyingToMessage?.senderId,
+      );
+
+      // Clear reply state after sending
+      _cancelReply();
+
+      // Send push notification
+      await _sendPushNotification('🎤 Voice Message');
+    }
+  }
+
+  // Show voice message input dialog
+  Future<String?> _showVoiceMessageDialog() async {
+    final TextEditingController voiceController = TextEditingController();
+    
+    return await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.mic, color: Colors.grey),
+            SizedBox(width: 8),
+            Text('Voice Message'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Type your voice message:'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: voiceController,
+              decoration: const InputDecoration(
+                hintText: 'What would you like to say?',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 3,
+            ),
+            const SizedBox(height: 12),
+            const Row(
+              children: [
+                Icon(Icons.lightbulb, color: Colors.amber, size: 16),
+                SizedBox(width: 4),
+                Text(
+                  'Tip: This simulates a voice message. Real audio recording will be added soon!',
+                  style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
+                ),
+              ],
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (voiceController.text.isNotEmpty) {
+                Navigator.pop(context, voiceController.text);
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Please enter a message'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            child: const Text('Send'),
+          ),
+        ],
+      ),
     );
   }
+
 
   Future<void> _cancelRecording() async {
     _recordTimer?.cancel();
@@ -242,16 +417,12 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Future<void> _stopAndSendRecording() async {
-    _recordTimer?.cancel();
-    setState(() {
-      _isRecording = false;
-      _recordDuration = Duration.zero;
-      _recordDragOffset = 0;
-    });
-
-    // TODO: Implement audio recording when record package is available
+    // Simplified - just show coming soon message
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Audio recording not available yet')),
+      const SnackBar(
+        content: Text('🎤 Voice recording feature coming soon!'),
+        duration: Duration(seconds: 2),
+      ),
     );
   }
 
@@ -424,7 +595,7 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  void _sendImage() async {
+  void _sendImageFromGallery() async {
     try {
       final XFile? image = await _picker.pickImage(
         source: ImageSource.gallery,
@@ -518,6 +689,100 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  void _sendImageFromCamera() async {
+    try {
+      final XFile? image = await _picker.pickImage(
+        source: ImageSource.camera,
+        maxWidth: 1024,
+        maxHeight: 1024,
+        imageQuality: 80,
+      );
+
+      if (image != null && _currentUserId != null) {
+    // Create optimistic message
+    final optimisticMessage = Message(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      senderId: _currentUserId!,
+      content: '',
+      timestamp: DateTime.now(),
+      isRead: false,
+          imageUrl: image.path, // Temporary local path
+    );
+
+    setState(() {
+      _optimisticMessages.add(optimisticMessage);
+    });
+
+        // Scroll to bottom after adding optimistic image message
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollToBottom();
+    });
+
+    try {
+          // Upload image to Firebase Storage
+          final imageUrl = await _uploadImageToStorage(image);
+
+          // Send message with image URL
+      await _databaseService.sendImageMessage(
+        _currentUserId!,
+        widget.otherUser.uid,
+            imageUrl,
+        replyToMessageId: _replyingToMessage?.id,
+        replyToContent: _replyingToMessage?.content,
+        replyToSenderId: _replyingToMessage?.senderId,
+      );
+
+      // Remove optimistic message after successful send
+      if (mounted) {
+        setState(() {
+          _optimisticMessages
+              .removeWhere((msg) => msg.id == optimisticMessage.id);
+        });
+      }
+
+      // Clear reply state after sending
+      _cancelReply();
+
+          // Send push notification for image
+          await _sendPushNotification('📷 Image');
+    } catch (e) {
+      // Remove optimistic message on error
+      if (mounted) {
+        setState(() {
+          _optimisticMessages
+              .removeWhere((msg) => msg.id == optimisticMessage.id);
+        });
+      }
+
+          // Provide more specific error messages
+          String errorMessage = 'Failed to upload image';
+          if (e.toString().contains('unauthorized')) {
+            errorMessage =
+                'Permission denied. Please check your account status.';
+          } else if (e.toString().contains('network')) {
+            errorMessage = 'Network error. Please check your connection.';
+          } else if (e.toString().contains('quota')) {
+            errorMessage = 'Storage quota exceeded. Please try again later.';
+          } else {
+            errorMessage = 'Failed to upload image: ${e.toString()}';
+          }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(errorMessage),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to take photo: $e')),
+      );
+    }
+  }
+
   Future<String> _uploadImageToStorage(XFile image) async {
     final List<String> userIds = [_currentUserId!, widget.otherUser.uid]
       ..sort();
@@ -546,271 +811,188 @@ class _ChatScreenState extends State<ChatScreen>
     return downloadUrl;
   }
 
-  void _showGifPicker() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.6,
-        decoration: const BoxDecoration(
-          color: Color(0xFF1C1C1E),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: Column(
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.symmetric(vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.grey[600],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                'Choose a GIF',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-            Expanded(
-              child: GridView.builder(
-                padding: const EdgeInsets.all(16),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  crossAxisSpacing: 12,
-                  mainAxisSpacing: 12,
-                  childAspectRatio: 1.2,
-                ),
-                itemCount: _gifUrls.length,
-                itemBuilder: (context, index) {
-                  final gifUrl = _gifUrls[index];
-                  return GestureDetector(
-                    onTap: () {
-                      Navigator.pop(context);
-                      _sendGif(gifUrl);
-                    },
-                    child: Container(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey[700]!),
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: Image.network(
-                          gifUrl,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) {
-                            return Container(
-                              color: Colors.grey[800],
-                              child: const Icon(
-                                Icons.broken_image,
-                                color: Colors.grey,
-                                size: 30,
-                              ),
-                            );
-                          },
-                          loadingBuilder: (context, child, loadingProgress) {
-                            if (loadingProgress == null) return child;
-                            return Container(
-                              color: Colors.grey[800],
-                              child: const Center(
-                                child: CircularProgressIndicator(
-                                  color: Color(0xFF8B5CF6),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
+
+
+
+  // Upload document to Firebase Storage (temporarily disabled)
+  /*
+  Future<String> _uploadDocumentToStorage(File file, String fileName) async {
+    final List<String> userIds = [_currentUserId!, widget.otherUser.uid]
+      ..sort();
+    final String chatId = userIds.join('_');
+
+    final storageRef = FirebaseStorage.instance
+        .ref()
+        .child('chats')
+        .child(chatId)
+        .child('documents')
+        .child('${DateTime.now().millisecondsSinceEpoch}_$fileName');
+
+    final uploadTask = await storageRef.putFile(file);
+    final downloadUrl = await uploadTask.ref.getDownloadURL();
+
+    return downloadUrl;
+  }
+  */
+
+  // Upload audio to Firebase Storage (temporarily disabled)
+  /*
+  Future<String> _uploadAudioToStorage(File audioFile) async {
+    final List<String> userIds = [_currentUserId!, widget.otherUser.uid]
+      ..sort();
+    final String chatId = userIds.join('_');
+
+    final storageRef = FirebaseStorage.instance
+        .ref()
+        .child('chats')
+        .child(chatId)
+        .child('audio')
+        .child('${DateTime.now().millisecondsSinceEpoch}.m4a');
+
+    final uploadTask = await storageRef.putFile(
+      audioFile,
+      SettableMetadata(contentType: 'audio/m4a'),
     );
+    final downloadUrl = await uploadTask.ref.getDownloadURL();
+
+    return downloadUrl;
+  }
+  */
+
+
+
+  void _toggleAttachmentMenu() {
+        setState(() {
+      _showAttachmentMenu = !_showAttachmentMenu;
+      _showEmojiPicker = false; // Hide emoji picker when showing attachment menu
+    });
   }
 
-  void _sendGif(String gifUrl) async {
-    if (_currentUserId == null) return;
-
-    // Create optimistic message
-    final optimisticMessage = Message(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      senderId: _currentUserId!,
-      content: '',
-      timestamp: DateTime.now(),
-      isRead: false,
-      imageUrl: gifUrl, // GIF URL
-    );
-
-    setState(() {
-      _optimisticMessages.add(optimisticMessage);
-    });
-
-    // Scroll to bottom after adding optimistic GIF message
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _scrollToBottom();
-    });
-
-    try {
-      // Send message with GIF URL
-      await _databaseService.sendImageMessage(
-        _currentUserId!,
-        widget.otherUser.uid,
-        gifUrl,
-        replyToMessageId: _replyingToMessage?.id,
-        replyToContent: _replyingToMessage?.content,
-        replyToSenderId: _replyingToMessage?.senderId,
-      );
-
-      // Remove optimistic message after successful send
-      if (mounted) {
+  void _toggleEmojiPicker() {
         setState(() {
-          _optimisticMessages
-              .removeWhere((msg) => msg.id == optimisticMessage.id);
-        });
-      }
-
-      // Clear reply state after sending
-      _cancelReply();
-
-      // Send push notification for GIF
-      await _sendPushNotification('🎬 GIF');
-    } catch (e) {
-      // Remove optimistic message on error
+      _showEmojiPicker = !_showEmojiPicker;
+      _showAttachmentMenu = false; // Hide attachment menu when showing emoji picker
+    });
+    
+    if (_showEmojiPicker) {
+      // Hide keyboard when showing emoji picker
+      _messageFocusNode.unfocus();
+      // Animate emoji picker in
       if (mounted) {
-        setState(() {
-          _optimisticMessages
-              .removeWhere((msg) => msg.id == optimisticMessage.id);
-        });
+        _emojiAnimationController.forward();
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to send GIF: $e')),
-      );
+    } else {
+      // Animate emoji picker out
+      if (mounted) {
+        _emojiAnimationController.reverse();
+      }
     }
+    // Don't automatically show keyboard when closing emoji picker (like WhatsApp)
   }
 
-  // Sample GIF URLs - in a real app, you'd fetch these from a GIF API like Giphy
-  final List<String> _gifUrls = [
-    'https://media.giphy.com/media/3o7btPCcdNniyf0ArS/giphy.gif',
-    'https://media.giphy.com/media/26BRrSvJUaB3wLwuk/giphy.gif',
-    'https://media.giphy.com/media/3o7TKSjRrfIPjeiVy/giphy.gif',
-    'https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif',
-    'https://media.giphy.com/media/3o7TKF1Z8h9V1kZz2E/giphy.gif',
-    'https://media.giphy.com/media/26BRrSvJUaB3wLwuk/giphy.gif',
-    'https://media.giphy.com/media/3o7btPCcdNniyf0ArS/giphy.gif',
-    'https://media.giphy.com/media/26BRrSvJUaB3wLwuk/giphy.gif',
-  ];
+  Widget _buildAttachmentMenu() {
+    if (!_showAttachmentMenu) return const SizedBox.shrink();
 
-  void _showTextFormattingOptions() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        decoration: const BoxDecoration(
-          color: Color(0xFF1C1C1E),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+    return Stack(
           children: [
-            Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.symmetric(vertical: 12),
+        // Background overlay to dismiss menu when tapped
+        Positioned.fill(
+          child: GestureDetector(
+            onTap: _toggleAttachmentMenu,
+            child: Container(
+              color: Colors.transparent,
+            ),
+          ),
+        ),
+        // Attachment menu
+        Positioned(
+          bottom: 100, // Position above the input area
+          left: 16,
+          right: 16,
+          child: GestureDetector(
+            onTap: () {}, // Prevent tap from propagating to dismiss
+            child: Container(
               decoration: BoxDecoration(
-                color: Colors.grey[600],
-                borderRadius: BorderRadius.circular(2),
+                color: const Color(0xFF2C2C2E),
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.3),
+                    blurRadius: 10,
+                    offset: const Offset(0, 5),
+                  ),
+                ],
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                'Text Formatting',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
+              padding: const EdgeInsets.all(20),
+        child: Column(
+          children: [
+            // Single row with 3 items
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                _buildFormatButton(
-                  icon: Icons.format_bold,
-                  label: 'Bold',
-                  isActive: _isBold,
+                _buildAttachmentOption(
+                  icon: Icons.photo_library,
+                  label: 'Gallery',
+                  color: Colors.blue,
                   onTap: () {
-                    setState(() {
-                      _isBold = !_isBold;
-                    });
-                    Navigator.pop(context);
+                    _toggleAttachmentMenu();
+                    _sendImageFromGallery();
                   },
                 ),
-                _buildFormatButton(
-                  icon: Icons.format_italic,
-                  label: 'Italic',
-                  isActive: _isItalic,
+                _buildAttachmentOption(
+                  icon: Icons.camera_alt,
+                  label: 'Camera',
+                  color: Colors.pink,
                   onTap: () {
-                    setState(() {
-                      _isItalic = !_isItalic;
-                    });
-                    Navigator.pop(context);
+                    _toggleAttachmentMenu();
+                    _sendImageFromCamera();
                   },
                 ),
-                _buildFormatButton(
-                  icon: Icons.format_underlined,
-                  label: 'Underline',
-                  isActive: _isUnderline,
+                _buildAttachmentOption(
+                  icon: Icons.headphones,
+                  label: 'Audio',
+                  color: Colors.orange,
                   onTap: () {
-                    setState(() {
-                      _isUnderline = !_isUnderline;
-                    });
-                    Navigator.pop(context);
+                    _toggleAttachmentMenu();
+                    _startRecording();
                   },
                 ),
               ],
             ),
-            const SizedBox(height: 20),
           ],
         ),
       ),
+          ),
+        ),
+      ],
     );
   }
 
-  Widget _buildFormatButton({
+  Widget _buildAttachmentOption({
     required IconData icon,
     required String label,
-    required bool isActive,
+    required Color color,
     required VoidCallback onTap,
   }) {
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: isActive ? const Color(0xFF8B5CF6) : Colors.grey[800],
-          borderRadius: BorderRadius.circular(8),
-        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              icon,
-              color: Colors.white,
-              size: 24,
+          Container(
+            width: 60,
+            height: 60,
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(12),
             ),
-            const SizedBox(height: 4),
+            child: Icon(
+              icon,
+              color: color,
+              size: 28,
+            ),
+          ),
+          const SizedBox(height: 8),
             Text(
               label,
               style: const TextStyle(
@@ -821,7 +1003,98 @@ class _ChatScreenState extends State<ChatScreen>
             ),
           ],
         ),
-      ),
+    );
+  }
+
+  Widget _buildEmojiPicker() {
+    if (!_showEmojiPicker) return const SizedBox.shrink();
+
+    return AnimatedBuilder(
+      animation: _emojiAnimationController,
+      builder: (context, child) {
+        return Transform.translate(
+          offset: Offset(0, 320 * (1 - _emojiSlideAnimation.value)),
+          child: Opacity(
+            opacity: _emojiSlideAnimation.value,
+            child: Stack(
+      children: [
+        // Background overlay to dismiss emoji picker when tapped
+        Positioned.fill(
+          child: GestureDetector(
+            onTap: () {
+              setState(() {
+                _showEmojiPicker = false;
+              });
+              // Don't automatically show keyboard (like WhatsApp)
+            },
+            child: Container(
+              color: Colors.transparent,
+            ),
+          ),
+        ),
+        // Emoji picker
+        Positioned(
+          bottom: 0,
+          left: 0,
+          right: 0,
+          child: GestureDetector(
+            onTap: () {}, // Prevent tap from propagating to dismiss
+            child: Container(
+              height: 320,
+              decoration: const BoxDecoration(
+                color: Color(0xFF2C2C2E),
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(16),
+                  topRight: Radius.circular(16),
+                ),
+              ),
+              child: EmojiPicker(
+                onEmojiSelected: (category, emoji) {
+                  // Insert emoji into text field
+                  final text = _messageController.text;
+                  final selection = _messageController.selection;
+                  
+                  // Ensure selection is valid
+                  final start = selection.start.clamp(0, text.length);
+                  final end = selection.end.clamp(0, text.length);
+                  
+                  final newText = text.replaceRange(start, end, emoji.emoji);
+                  _messageController.text = newText;
+                  
+                  // Set cursor position after the inserted emoji
+                  final newPosition = start + emoji.emoji.length;
+                  _messageController.selection = TextSelection.fromPosition(
+                    TextPosition(offset: newPosition),
+                  );
+                  
+                  // Keep emoji picker open (like WhatsApp)
+                  // Don't close the picker automatically
+                },
+                config: Config(
+                  height: 280,
+                  checkPlatformCompatibility: true,
+                  emojiViewConfig: EmojiViewConfig(
+                    backgroundColor: const Color(0xFF2C2C2E),
+                    emojiSizeMax: 28,
+                    recentsLimit: 28,
+                  ),
+                  categoryViewConfig: CategoryViewConfig(
+                    backgroundColor: const Color(0xFF2C2C2E),
+                    iconColorSelected: const Color(0xFF007AFF),
+                  ),
+                  searchViewConfig: SearchViewConfig(
+                    backgroundColor: const Color(0xFF2C2C2E),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -1268,14 +1541,89 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  // Multi-select functionality
-  void _toggleSelectionMode() {
+  // Multi-select functionality (temporarily disabled)
+  // void _toggleSelectionMode() {
+  //   print('DEBUG: Toggling selection mode from $_isSelectionMode to ${!_isSelectionMode}');
+  //   setState(() {
+  //     _isSelectionMode = !_isSelectionMode;
+  //     if (!_isSelectionMode) {
+  //       _selectedMessageIds.clear();
+  //     }
+  //   });
+  // }
+
+  void _exitSelectionMode() {
+    print('DEBUG: Exiting selection mode');
     setState(() {
-      _isSelectionMode = !_isSelectionMode;
-      if (!_isSelectionMode) {
+      _isSelectionMode = false;
         _selectedMessageIds.clear();
-      }
     });
+  }
+
+  void _onFocusChange() {
+    if (!mounted) return;
+    
+    try {
+      if (_messageFocusNode.hasFocus) {
+        // Animate input when focused
+        _inputAnimationController.forward();
+      } else {
+        // Animate input when unfocused (but keep it visible)
+        _inputAnimationController.reverse();
+      }
+    } catch (e) {
+      // Ignore animation errors
+      print('Animation error: $e');
+    }
+  }
+
+  void _loadMockData() {
+    // Load mock messages for offline testing
+    final mockMessages = [
+      Message(
+        id: 'mock1',
+        senderId: widget.otherUser.uid,
+        content: 'Hey! How are you doing?',
+        timestamp: DateTime.now().subtract(const Duration(hours: 2)),
+        isRead: true,
+      ),
+      Message(
+        id: 'mock2',
+        senderId: _currentUserId!,
+        content: 'I\'m doing great! Thanks for asking 😊',
+        timestamp: DateTime.now().subtract(const Duration(hours: 1, minutes: 45)),
+        isRead: true,
+      ),
+      Message(
+        id: 'mock3',
+        senderId: widget.otherUser.uid,
+        content: 'That\'s awesome! Want to grab coffee sometime?',
+        timestamp: DateTime.now().subtract(const Duration(minutes: 30)),
+        isRead: true,
+      ),
+      Message(
+        id: 'mock4',
+        senderId: _currentUserId!,
+        content: 'Sure! I\'d love to ☕',
+        timestamp: DateTime.now().subtract(const Duration(minutes: 15)),
+        isRead: true,
+      ),
+    ];
+
+    if (mounted) {
+      setState(() {
+        _messages = mockMessages;
+        _isLoading = false;
+        _isOfflineMode = true;
+      });
+      
+      // Scroll to bottom after loading mock data
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _scrollToBottom();
+        }
+      });
+    }
   }
 
   void _toggleMessageSelection(String messageId) {
@@ -1511,6 +1859,19 @@ class _ChatScreenState extends State<ChatScreen>
 
   @override
   Widget build(BuildContext context) {
+    // Force disable selection mode on every build
+    if (_isSelectionMode) {
+      print('DEBUG: Selection mode was true, forcing it to false');
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() {
+            _isSelectionMode = false;
+            _selectedMessageIds.clear();
+          });
+        }
+      });
+    }
+    
     // Show loading state while user is being initialized
     if (_currentUserId == null) {
       return Scaffold(
@@ -1523,7 +1884,14 @@ class _ChatScreenState extends State<ChatScreen>
       );
     }
 
-    return Scaffold(
+    return PopScope(
+      canPop: !_isSelectionMode,
+      onPopInvoked: (didPop) {
+        if (!didPop && _isSelectionMode) {
+          _exitSelectionMode();
+        }
+      },
+      child: Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
@@ -1601,7 +1969,7 @@ class _ChatScreenState extends State<ChatScreen>
                       Text(
                         _isSelectionMode
                             ? '${_selectedMessageIds.length} selected'
-                            : widget.otherUser.displayName ?? 'Unknown User',
+                            : '${widget.otherUser.displayName ?? 'Unknown User'}${_isOfflineMode ? ' (Offline)' : ''}',
                         style: AppFonts.titleMedium.copyWith(
                           color: Colors.white,
                           fontSize: 16, // Smaller font size for person's name
@@ -1636,7 +2004,7 @@ class _ChatScreenState extends State<ChatScreen>
           if (_isSelectionMode) ...[
             IconButton(
               icon: const Icon(Icons.close, color: Colors.white),
-              onPressed: _toggleSelectionMode,
+              onPressed: _exitSelectionMode,
             ),
             if (_selectedMessageIds.isNotEmpty)
               IconButton(
@@ -1671,13 +2039,20 @@ class _ChatScreenState extends State<ChatScreen>
           ],
         ],
       ),
-      body: Column(
+      body: Stack(
+        children: [
+          Column(
         children: [
           Expanded(
             child: _buildChatContent(),
           ),
           _buildMessageInput(),
         ],
+          ),
+          _buildAttachmentMenu(),
+          _buildEmojiPicker(),
+        ],
+      ),
       ),
     );
   }
@@ -1729,13 +2104,13 @@ class _ChatScreenState extends State<ChatScreen>
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(
-            Icons.chat_bubble_outline,
+            _isOfflineMode ? Icons.wifi_off : Icons.chat_bubble_outline,
             size: 64,
-            color: Colors.grey[600],
+            color: _isOfflineMode ? Colors.orange : Colors.grey[600],
           ),
           const SizedBox(height: 16),
           Text(
-            'No messages yet',
+            _isOfflineMode ? 'Offline Mode' : 'No messages yet',
             style: TextStyle(
               fontSize: 18,
               color: Colors.grey[400],
@@ -1743,11 +2118,25 @@ class _ChatScreenState extends State<ChatScreen>
           ),
           const SizedBox(height: 8),
           Text(
-            'Start a conversation with ${widget.otherUser.displayName ?? 'your match'}',
+            _isOfflineMode 
+              ? 'Showing mock data for testing. Check your internet connection.'
+              : 'Start a conversation with ${widget.otherUser.displayName ?? 'your match'}',
             style: TextStyle(
               fontSize: 14,
               color: Colors.grey[500],
             ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 24),
+          ElevatedButton(
+            onPressed: () {
+              _initializeChat();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF895BE0),
+              foregroundColor: Colors.white,
+            ),
+            child: Text(_isOfflineMode ? 'Retry Connection' : 'Retry Loading Messages'),
           ),
         ],
       ),
@@ -1944,10 +2333,11 @@ class _ChatScreenState extends State<ChatScreen>
                             ? () => _toggleMessageSelection(message.id)
                             : () => _onMessageTap(message),
                         onLongPress: () {
-                          if (!_isSelectionMode) {
-                            _toggleSelectionMode();
-                            _toggleMessageSelection(message.id);
-                          }
+                          // Temporarily disabled to prevent accidental selection mode activation
+                          // if (!_isSelectionMode) {
+                          //   _toggleSelectionMode();
+                          //   _toggleMessageSelection(message.id);
+                          // }
                           _onUserInteraction();
                         },
                         child: Container(
@@ -2366,7 +2756,16 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Widget _buildMessageInput() {
-    return Container(
+    return AnimatedBuilder(
+      animation: _inputAnimationController,
+      builder: (context, child) {
+        return Transform.translate(
+          offset: Offset(0, 50 * (1 - _inputSlideAnimation.value)),
+          child: Transform.scale(
+            scale: _inputScaleAnimation.value,
+            child: Opacity(
+              opacity: _inputSlideAnimation.value,
+              child: Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.black,
@@ -2461,14 +2860,12 @@ class _ChatScreenState extends State<ChatScreen>
               Expanded(
                 child: Container(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 8), // Reduced vertical padding from 12 to 8
+                      horizontal: 12,
+                      vertical: 6), // WhatsApp-like padding
                   decoration: BoxDecoration(
-                    color: const Color(0xFF2C2C2E), // Dark gray background
-                    borderRadius: BorderRadius.circular(
-                        32), // Increased from 24 to 32 for more rounded corners
-                    border:
-                        Border.all(color: const Color(0xFF2C2C2E), width: 1),
+                    color: const Color(0xFF1F1F1F), // Darker WhatsApp-like background
+                    borderRadius: BorderRadius.circular(24), // WhatsApp-like border radius
+                    border: Border.all(color: const Color(0xFF1F1F1F), width: 1),
                   ),
                   child: _isRecording
                       ? GestureDetector(
@@ -2522,22 +2919,15 @@ class _ChatScreenState extends State<ChatScreen>
                         )
                       : Row(
                           children: [
-                            // Aa icon (text formatting) on the left
+                            // Emoji icon on the left
                             IconButton(
-                              icon: Text(
-                                'Aa',
-                                style: TextStyle(
-                                  color: _isBold || _isItalic || _isUnderline
-                                      ? const Color(0xFF8B5CF6)
-                                      : Colors.white,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              onPressed: _showTextFormattingOptions,
-                              padding: const EdgeInsets.all(8),
+                              icon: Icon(Icons.emoji_emotions,
+                                  color: _showEmojiPicker ? const Color(0xFF8B5CF6) : Colors.white, size: 22),
+                              onPressed: _toggleEmojiPicker,
+                              padding: const EdgeInsets.all(6),
+                              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                             ),
-                            const SizedBox(width: 8),
+                            const SizedBox(width: 4),
                             // Message input field
                             Expanded(
                               child: TextField(
@@ -2546,13 +2936,13 @@ class _ChatScreenState extends State<ChatScreen>
                                 style: const TextStyle(
                                     color: Colors.white, fontSize: 16),
                                 decoration: InputDecoration(
-                                  hintText: 'Message...',
+                                  hintText: 'Message',
                                   hintStyle: const TextStyle(
-                                    color: Color(
-                                        0xFF8E8E93), // Light gray hint color
+                                    color: Color(0xFF8E8E93), // WhatsApp-like hint color
+                                    fontSize: 16,
                                   ),
                                   border: InputBorder.none,
-                                  contentPadding: EdgeInsets.zero,
+                                  contentPadding: const EdgeInsets.symmetric(vertical: 8),
                                 ),
                                 maxLines: null,
                                 textInputAction: TextInputAction.send,
@@ -2571,42 +2961,27 @@ class _ChatScreenState extends State<ChatScreen>
                                 },
                               ),
                             ),
-                            // Right-side icons inside the same container
+                            // Attachment menu trigger
+                            IconButton(
+                              icon: const Icon(Icons.attach_file,
+                                  color: Colors.white, size: 22),
+                              onPressed: _toggleAttachmentMenu,
+                              padding: const EdgeInsets.all(6),
+                              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                            ),
+                            // Camera icon
                             IconButton(
                               icon: const Icon(Icons.camera_alt,
-                                  color: Colors.white, size: 20),
-                              onPressed: _sendImage,
-                              padding: const EdgeInsets.all(8),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.photo_library,
-                                  color: Colors.white, size: 20),
-                              onPressed: _sendImage,
-                              padding: const EdgeInsets.all(8),
-                            ),
-                            IconButton(
-                              icon: const Text(
-                                'GIF',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              onPressed: _showGifPicker,
-                              padding: const EdgeInsets.all(8),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.mic,
-                                  color: Colors.white, size: 20),
-                              onPressed: _startRecording,
-                              padding: const EdgeInsets.all(8),
+                                  color: Colors.white, size: 22),
+                              onPressed: _sendImageFromCamera,
+                              padding: const EdgeInsets.all(6),
+                              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                             ),
                           ],
                         ),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
               if (_isRecording)
                 Container(
                   decoration: BoxDecoration(
@@ -2618,12 +2993,38 @@ class _ChatScreenState extends State<ChatScreen>
                     onPressed: _stopAndSendRecording,
                   ),
                 )
+              else if (_messageController.text.trim().isNotEmpty)
+                Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF8B5CF6),
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: IconButton(
+                    icon: const Icon(Icons.send, color: Colors.white),
+                    onPressed: _sendMessage,
+                  ),
+                )
               else
-                const SizedBox.shrink(),
+                // Voice recording button (green circle like WhatsApp)
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.green,
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: IconButton(
+                    icon: const Icon(Icons.mic, color: Colors.white),
+                    onPressed: _startRecording,
+                  ),
+                ),
             ],
           ),
         ],
       ),
+              ),
+            ),
+      ),
+        );
+      },
     );
   }
 
@@ -2688,10 +3089,15 @@ class _ChatScreenState extends State<ChatScreen>
       p.release();
     }
 
+    // Remove focus listener before disposing
+    _messageFocusNode.removeListener(_onFocusChange);
+
     // Dispose controllers and focus nodes
     _messageController.dispose();
     _scrollController.dispose();
     _messageFocusNode.dispose();
+    _inputAnimationController.dispose();
+    _emojiAnimationController.dispose();
 
     // Dispose recorder
     // _recorder.dispose();

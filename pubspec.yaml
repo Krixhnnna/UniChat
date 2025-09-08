@@ -33,6 +33,12 @@ dependencies:
   flutter_cache_manager: ^3.3.1
   # flutter_local_notifications: ^14.1.5  # Temporarily disabled due to compilation issues
   http: ^1.1.0  # For downloading profile pictures
+  emoji_picker_flutter: ^2.2.0
+  # geolocator: ^11.0.0  # Temporarily disabled due to plugin issues
+  # file_picker: ^8.0.0+1  # Temporarily disabled due to plugin issues
+  # contacts_service: ^0.6.3  # Temporarily disabled due to plugin issues
+  # permission_handler: ^11.3.1  # Temporarily disabled due to plugin issues
+  # record: ^4.4.4  # Temporarily disabled due to build issues
 
 dev_dependencies:
   flutter_test:
