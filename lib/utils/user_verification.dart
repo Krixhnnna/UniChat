@@ -14,8 +14,8 @@ class UserVerification {
     return isFounder(user) || user.isVerified;
   }
 
-  // Get verification status for display
+  // Get verification status for display - only show for founder
   static bool getDisplayVerificationStatus(User user) {
-    return shouldBeVerified(user);
+    return isFounder(user);
   }
 }

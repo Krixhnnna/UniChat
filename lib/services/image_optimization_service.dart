@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:image/image.dart' as img;
-import 'package:firebase_storage/firebase_storage.dart';
+// import 'package:firebase_storage/firebase_storage.dart';  // Temporarily disabled
 
 class ImageOptimizationService {
   static const int _maxDimension = 800;
@@ -94,19 +94,20 @@ class ImageOptimizationService {
     }
   }
 
-  /// Get optimized storage reference for user media
-  static Reference getMediaStorageRef(String userId, String fileName) {
-    return FirebaseStorage.instance
-        .ref()
-        .child('users/$userId/media/$fileName');
-  }
+  // Firebase Storage temporarily disabled
+  // /// Get optimized storage reference for user media
+  // static Reference getMediaStorageRef(String userId, String fileName) {
+  //   return FirebaseStorage.instance
+  //       .ref()
+  //       .child('users/$userId/media/$fileName');
+  // }
 
-  /// Get optimized storage reference for profile pictures
-  static Reference getProfilePictureStorageRef(String userId, String fileName) {
-    return FirebaseStorage.instance
-        .ref()
-        .child('users/$userId/profile_pictures/$fileName');
-  }
+  // /// Get optimized storage reference for profile pictures
+  // static Reference getProfilePictureStorageRef(String userId, String fileName) {
+  //   return FirebaseStorage.instance
+  //       .ref()
+  //       .child('users/$userId/profile_pictures/$fileName');
+  // }
 
   /// Upload optimized profile picture with ultra-fast loading optimization
   static Future<String> uploadOptimizedProfilePicture(
@@ -114,44 +115,8 @@ class ImageOptimizationService {
     File imageFile, {
     Function(double)? onProgress,
   }) async {
-    try {
-      // Ultra-optimize profile picture
-      final optimizedBytes = await optimizeProfilePictureForUpload(imageFile);
-
-      // Generate filename
-      final fileName = 'profile_${DateTime.now().millisecondsSinceEpoch}.jpg';
-      final storageRef = getProfilePictureStorageRef(userId, fileName);
-
-      // Upload with progress tracking
-      final uploadTask = storageRef.putData(
-        optimizedBytes,
-        SettableMetadata(
-          contentType: 'image/jpeg',
-          customMetadata: {
-            'type': 'profile_picture',
-            'originalSize': imageFile.lengthSync().toString(),
-            'optimizedSize': optimizedBytes.length.toString(),
-            'dimensions':
-                '${_profilePicMaxDimension}x${_profilePicMaxDimension}',
-            'uploadedAt': DateTime.now().toIso8601String(),
-          },
-        ),
-      );
-
-      // Listen to progress
-      if (onProgress != null) {
-        uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
-          final progress = snapshot.bytesTransferred / snapshot.totalBytes;
-          onProgress(progress);
-        });
-      }
-
-      // Wait for completion
-      final snapshot = await uploadTask;
-      return await snapshot.ref.getDownloadURL();
-    } catch (e) {
-      throw Exception('Failed to upload profile picture: $e');
-    }
+    // Firebase Storage temporarily disabled - return local path
+    return imageFile.path;
   }
 
   /// Upload optimized image with progress tracking
@@ -160,41 +125,8 @@ class ImageOptimizationService {
     File imageFile, {
     Function(double)? onProgress,
   }) async {
-    try {
-      // Optimize image
-      final optimizedBytes = await optimizeImageForUpload(imageFile);
-
-      // Generate filename
-      final fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
-      final storageRef = getMediaStorageRef(userId, fileName);
-
-      // Upload with progress tracking
-      final uploadTask = storageRef.putData(
-        optimizedBytes,
-        SettableMetadata(
-          contentType: 'image/jpeg',
-          customMetadata: {
-            'originalSize': imageFile.lengthSync().toString(),
-            'optimizedSize': optimizedBytes.length.toString(),
-            'uploadedAt': DateTime.now().toIso8601String(),
-          },
-        ),
-      );
-
-      // Listen to progress
-      if (onProgress != null) {
-        uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
-          final progress = snapshot.bytesTransferred / snapshot.totalBytes;
-          onProgress(progress);
-        });
-      }
-
-      // Wait for completion
-      final snapshot = await uploadTask;
-      return await snapshot.ref.getDownloadURL();
-    } catch (e) {
-      throw Exception('Failed to upload image: $e');
-    }
+    // Firebase Storage temporarily disabled - return local path
+    return imageFile.path;
   }
 
   /// Get image dimensions without loading full image

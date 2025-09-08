@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:campus_crush/widgets/verification_badge.dart';
 import 'package:campus_crush/utils/user_verification.dart';
+import 'package:campus_crush/screens/chat/chat_screen.dart';
 import 'dart:math' as math;
 
 class SwipeScreen extends StatefulWidget {
@@ -176,9 +177,9 @@ class _SwipeScreenState extends State<SwipeScreen>
     });
 
     try {
-      final matchResult = await userService.swipeUser(swipedUser.uid, action);
-      if (matchResult != null) {
-        _showMatchDialog(swipedUser, matchResult);
+      final swipeResult = await userService.swipeUser(swipedUser.uid, action);
+      if (swipeResult != null) {
+        _handleSwipeResult(swipedUser, swipeResult);
       }
     } catch (e) {
       print('Error swiping user: $e');
@@ -188,14 +189,39 @@ class _SwipeScreenState extends State<SwipeScreen>
     }
   }
 
+  void _handleSwipeResult(User swipedUser, String result) {
+    switch (result) {
+      case 'friend_match':
+        _showMatchDialog(swipedUser, 'friend_match');
+        break;
+      case 'crush_match':
+        _showMatchDialog(swipedUser, 'crush_match');
+        break;
+      case 'friend_request_sent':
+        _showRequestSentFeedback(swipedUser, 'friend');
+        break;
+      case 'crush_request_sent':
+        _showRequestSentFeedback(swipedUser, 'crush');
+        break;
+    }
+  }
+
   void _showMatchDialog(User matchedUser, String matchType) {
     showDialog(
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: Text(matchType == 'crush_match'
-              ? 'It\'s a Crush!'
-              : 'You\'re Friends!'),
+          backgroundColor: const Color(0xFF1A1A1A),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text(
+            matchType == 'crush_match'
+                ? 'It\'s a Crush! 💜'
+                : 'You\'re Friends! 👥',
+            style: const TextStyle(
+                color: Colors.white, fontWeight: FontWeight.bold),
+            textAlign: TextAlign.center,
+          ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -206,30 +232,73 @@ class _SwipeScreenState extends State<SwipeScreen>
                         ? matchedUser.profilePhotos[0]
                         : 'assets/defaultpfp.png'),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 16),
               Text(
                 matchType == 'crush_match'
                     ? 'You and ${matchedUser.displayName ?? 'Someone'} have a crush on each other!'
                     : 'You and ${matchedUser.displayName ?? 'Someone'} are now friends!',
                 textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white70),
               ),
             ],
           ),
           actions: <Widget>[
             TextButton(
-              child: const Text('Keep Swiping'),
+              child: const Text('Keep Swiping',
+                  style: TextStyle(color: Colors.grey)),
               onPressed: () => Navigator.of(context).pop(),
             ),
-            TextButton(
-              child: const Text('Send a Message'),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF895BE0),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20)),
+              ),
+              child: const Text('Send a Message',
+                  style: TextStyle(color: Colors.white)),
               onPressed: () {
                 Navigator.of(context).pop();
-                Navigator.pushNamed(context, '/chat', arguments: matchedUser);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => ChatScreen(otherUser: matchedUser),
+                  ),
+                );
               },
             ),
           ],
         );
       },
+    );
+  }
+
+  void _showRequestSentFeedback(User swipedUser, String requestType) {
+    final emoji = requestType == 'crush' ? '💜' : '👥';
+    final message = requestType == 'crush'
+        ? 'Crush request sent to ${swipedUser.displayName ?? 'Someone'}!'
+        : 'Friend request sent to ${swipedUser.displayName ?? 'Someone'}!';
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Text(emoji, style: const TextStyle(fontSize: 18)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                message,
+                style: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.w500),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: const Color(0xFF895BE0),
+        duration: const Duration(seconds: 3),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        margin: const EdgeInsets.all(16),
+      ),
     );
   }
 
@@ -527,15 +596,19 @@ class _SwipeScreenState extends State<SwipeScreen>
                       children: [
                         Text(
                           '${user.displayName ?? 'N/A'}, ${user.age ?? ''}',
-                          style:
-                              Theme.of(context).textTheme.headlineMedium?.copyWith(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                  ),
+                          style: Theme.of(context)
+                              .textTheme
+                              .headlineMedium
+                              ?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
                         ),
                         const SizedBox(width: 8),
                         VerificationBadge(
-                          isVerified: UserVerification.getDisplayVerificationStatus(user),
+                          isVerified:
+                              UserVerification.getDisplayVerificationStatus(
+                                  user),
                           size: 20,
                         ),
                       ],

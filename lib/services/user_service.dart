@@ -2,17 +2,17 @@
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
-import 'package:firebase_storage/firebase_storage.dart';
+// import 'package:firebase_storage/firebase_storage.dart';  // Temporarily disabled
 import 'package:campus_crush/models/user_model.dart';
 import 'package:campus_crush/services/image_optimization_service.dart';
-import 'package:geolocator/geolocator.dart';
+// import 'package:geolocator/geolocator.dart';  // Temporarily disabled
 import 'package:firebase_messaging/firebase_messaging.dart';
 
 enum SwipeAction { reject, friend, crush }
 
 class UserService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseStorage _storage = FirebaseStorage.instance;
+  // final FirebaseStorage _storage = FirebaseStorage.instance;  // Temporarily disabled
   final firebase_auth.FirebaseAuth _auth = firebase_auth.FirebaseAuth.instance;
   final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
 
@@ -72,9 +72,10 @@ class UserService {
       // Fallback to original method if optimization fails
       String fileName =
           'profile_photos/$uid/${DateTime.now().millisecondsSinceEpoch}.jpg';
-      UploadTask uploadTask = _storage.ref().child(fileName).putFile(imageFile);
-      TaskSnapshot snapshot = await uploadTask;
-      return await snapshot.ref.getDownloadURL();
+      // UploadTask uploadTask = _storage.ref().child(fileName).putFile(imageFile);  // Temporarily disabled
+      // TaskSnapshot snapshot = await uploadTask;  // Temporarily disabled
+      // return await snapshot.ref.getDownloadURL();  // Temporarily disabled
+      return null; // Temporarily return null
     }
   }
 
@@ -106,12 +107,22 @@ class UserService {
 
       User swipedUser = User.fromFirestore(swipedUserDoc);
 
+      // For reject action, just add to rejected list
+      if (action == SwipeAction.reject) {
+        transaction.update(currentUserRef, {
+          fieldToAdd: FieldValue.arrayUnion([swipedUserId])
+        });
+        return null;
+      }
+
+      // For friend/crush actions, check if there's a mutual swipe
       transaction.update(currentUserRef, {
         fieldToAdd: FieldValue.arrayUnion([swipedUserId])
       });
 
       if (action == SwipeAction.friend) {
         if (swipedUser.friendedUsers.contains(currentUserId)) {
+          // Mutual friend swipe - create match
           transaction.update(currentUserRef, {
             'friendMatches': FieldValue.arrayUnion([swipedUserId])
           });
@@ -119,10 +130,15 @@ class UserService {
             'friendMatches': FieldValue.arrayUnion([currentUserId])
           });
           return 'friend_match';
+        } else {
+          // Send friend request notification
+          await _sendSwipeRequest(currentUserId, swipedUserId, 'friend');
+          return 'friend_request_sent';
         }
       } else if (action == SwipeAction.crush) {
         if (swipedUser.crushedUsers.contains(currentUserId) ||
             swipedUser.friendedUsers.contains(currentUserId)) {
+          // Mutual crush or friend+crush - create crush match
           transaction.update(currentUserRef, {
             'crushMatches': FieldValue.arrayUnion([swipedUserId])
           });
@@ -130,6 +146,7 @@ class UserService {
             'crushMatches': FieldValue.arrayUnion([currentUserId])
           });
 
+          // Remove from friend matches if they were friends
           transaction.update(currentUserRef, {
             'friendMatches': FieldValue.arrayRemove([swipedUserId])
           });
@@ -137,11 +154,74 @@ class UserService {
             'friendMatches': FieldValue.arrayRemove([currentUserId])
           });
           return 'crush_match';
+        } else {
+          // Send crush request notification
+          await _sendSwipeRequest(currentUserId, swipedUserId, 'crush');
+          return 'crush_request_sent';
         }
       }
 
       return null;
     });
+  }
+
+  /// Send a swipe request notification
+  Future<void> _sendSwipeRequest(
+      String senderId, String receiverId, String type) async {
+    try {
+      // Create request in Firestore
+      await _firestore.collection('requests').add({
+        'senderId': senderId,
+        'receiverId': receiverId,
+        'type': type, // 'friend' or 'crush'
+        'status': 'pending',
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // Send push notification
+      await _sendSwipeNotification(senderId, receiverId, type);
+    } catch (e) {
+      print('Error sending swipe request: $e');
+    }
+  }
+
+  /// Send push notification for swipe request
+  Future<void> _sendSwipeNotification(
+      String senderId, String receiverId, String type) async {
+    try {
+      // Get sender's info
+      final senderUser = await getUser(senderId);
+      if (senderUser == null) return;
+
+      // Get receiver's FCM token
+      final receiverUser = await getUser(receiverId);
+      if (receiverUser?.fcmToken == null) return;
+
+      // Prepare notification payload
+      final title =
+          type == 'crush' ? '💜 New Crush!' : '👥 New Friend Request!';
+      final body =
+          '${senderUser.displayName ?? 'Someone'} ${type == 'crush' ? 'has a crush on you' : 'wants to be friends'}!';
+
+      // Send notification via Firebase Functions or your notification service
+      // This would typically call your backend API or Firebase Functions
+      await _firestore.collection('notifications').add({
+        'token': receiverUser?.fcmToken ?? '',
+        'title': title,
+        'body': body,
+        'data': {
+          'type': 'swipe_request',
+          'senderId': senderId,
+          'requestType': type,
+          'click_action': 'FLUTTER_NOTIFICATION_CLICK',
+        },
+        'createdAt': FieldValue.serverTimestamp(),
+        'processed': false,
+      });
+    } catch (e) {
+      print('Error sending swipe notification: $e');
+    }
   }
 
   Future<List<User>> getPotentialMatches({

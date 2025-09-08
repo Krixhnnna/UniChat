@@ -2,14 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:intl/intl.dart';
 import '../../models/user_model.dart' as app_user;
 import '../../services/user_service.dart';
-import '../../services/database_service.dart';
 import '../../widgets/skeleton_loading.dart';
 import '../../theme/app_fonts.dart';
 import '../../widgets/verification_badge.dart';
 import '../../utils/user_verification.dart';
+import '../chat/chat_screen.dart';
 
 class PingsScreen extends StatefulWidget {
   @override
@@ -21,7 +20,6 @@ class _PingsScreenState extends State<PingsScreen>
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final UserService _userService = UserService();
-  final DatabaseService _databaseService = DatabaseService();
 
   List<NotificationItem> _notifications = [];
   bool _isLoading = true;
@@ -92,6 +90,9 @@ class _PingsScreenState extends State<PingsScreen>
       final batch = _firestore.batch();
       final requestRef = _firestore.collection('requests').doc(requestId);
 
+      // Get the request details
+      final request = _notifications.firstWhere((r) => r.id == requestId);
+
       // Update request status
       batch.update(requestRef, {
         'status': accept ? 'accepted' : 'rejected',
@@ -99,16 +100,37 @@ class _PingsScreenState extends State<PingsScreen>
       });
 
       if (accept) {
-        // If accepted, create a match/friendship
-        final request = _notifications.firstWhere((r) => r.id == requestId);
-        final matchRef = _firestore.collection('matches').doc();
+        // If accepted, create the match in users collection
+        final currentUserRef =
+            _firestore.collection('users').doc(_currentUserId);
+        final senderUserRef =
+            _firestore.collection('users').doc(request.sender!.uid);
 
-        batch.set(matchRef, {
-          'users': [_currentUserId, request.sender!.uid],
-          'type': request.requestType,
-          'createdAt': FieldValue.serverTimestamp(),
-          'status': 'active',
-        });
+        if (request.requestType == 'friend') {
+          // Create friend match
+          batch.update(currentUserRef, {
+            'friendMatches': FieldValue.arrayUnion([request.sender!.uid]),
+          });
+          batch.update(senderUserRef, {
+            'friendMatches': FieldValue.arrayUnion([_currentUserId]),
+          });
+        } else if (request.requestType == 'crush') {
+          // Create crush match
+          batch.update(currentUserRef, {
+            'crushMatches': FieldValue.arrayUnion([request.sender!.uid]),
+          });
+          batch.update(senderUserRef, {
+            'crushMatches': FieldValue.arrayUnion([_currentUserId]),
+          });
+
+          // Remove from friend matches if they were friends
+          batch.update(currentUserRef, {
+            'friendMatches': FieldValue.arrayRemove([request.sender!.uid]),
+          });
+          batch.update(senderUserRef, {
+            'friendMatches': FieldValue.arrayRemove([_currentUserId]),
+          });
+        }
       }
 
       await batch.commit();
@@ -121,10 +143,36 @@ class _PingsScreenState extends State<PingsScreen>
       // Show feedback
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(accept ? 'Request accepted!' : 'Request rejected'),
+          content: Row(
+            children: [
+              Icon(
+                accept ? Icons.check_circle : Icons.cancel,
+                color: Colors.white,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                accept
+                    ? '${request.requestType == 'crush' ? 'Crush' : 'Friend'} request accepted!'
+                    : 'Request rejected',
+                style: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.w500),
+              ),
+            ],
+          ),
           backgroundColor: accept ? Colors.green : Colors.red,
+          duration: const Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          margin: const EdgeInsets.all(16),
         ),
       );
+
+      // If accepted, show option to message
+      if (accept) {
+        _showMatchCreatedDialog(request.sender!, request.requestType!);
+      }
     } catch (e) {
       print('Error handling request: $e');
       ScaffoldMessenger.of(context).showSnackBar(
@@ -134,6 +182,69 @@ class _PingsScreenState extends State<PingsScreen>
         ),
       );
     }
+  }
+
+  void _showMatchCreatedDialog(app_user.User matchedUser, String matchType) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text(
+            matchType == 'crush' ? 'It\'s a Match! 💜' : 'New Friend! 👥',
+            style: const TextStyle(
+                color: Colors.white, fontWeight: FontWeight.bold),
+            textAlign: TextAlign.center,
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircleAvatar(
+                radius: 40,
+                backgroundImage: matchedUser.profilePhotos.isNotEmpty
+                    ? CachedNetworkImageProvider(
+                        matchedUser.profilePhotos.first)
+                    : const AssetImage('assets/defaultpfp.png')
+                        as ImageProvider,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'You and ${matchedUser.displayName ?? 'Someone'} are now ${matchType == 'crush' ? 'crushes' : 'friends'}!',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white70),
+              ),
+            ],
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('Maybe Later',
+                  style: TextStyle(color: Colors.grey)),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF8B5CF6),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20)),
+              ),
+              child: const Text('Send a Message',
+                  style: TextStyle(color: Colors.white)),
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => ChatScreen(otherUser: matchedUser),
+                  ),
+                );
+              },
+            ),
+          ],
+        );
+      },
+    );
   }
 
   String _getTimeAgo(DateTime dateTime) {

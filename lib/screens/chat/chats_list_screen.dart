@@ -9,6 +9,7 @@ import '../chat/chat_screen.dart';
 import '../../widgets/skeleton_loading.dart';
 import '../../widgets/verification_badge.dart';
 import '../../utils/user_verification.dart';
+import '../../utils/status_color_utils.dart';
 
 class ChatsListScreen extends StatefulWidget {
   @override
@@ -25,29 +26,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
   bool get wantKeepAlive => true;
 
   Color _getStatusColor(app_user.User user) {
-    if (user.isOnline == true) {
-      return Colors.green;
-    }
-
-    if (user.lastActive != null) {
-      final now = DateTime.now();
-      DateTime lastSeen;
-
-      if (user.lastActive is Timestamp) {
-        lastSeen = (user.lastActive as Timestamp).toDate();
-      } else if (user.lastActive is DateTime) {
-        lastSeen = user.lastActive as DateTime;
-      } else {
-        return Colors.grey;
-      }
-
-      final diff = now.difference(lastSeen);
-
-      if (diff.inMinutes < 30) {
-        return Colors.yellow;
-      }
-    }
-    return Colors.grey;
+    return StatusColorUtils.getStatusColor(user);
   }
 
   @override
@@ -641,16 +620,6 @@ class _ChatsListScreenState extends State<ChatsListScreen>
     return list;
   }
 
-  Future<app_user.User?> _fetchUser(String uid) async {
-    if (_userCache.containsKey(uid)) return _userCache[uid];
-    final doc =
-        await FirebaseFirestore.instance.collection('users').doc(uid).get();
-    if (!doc.exists) return null;
-    final user = app_user.User.fromFirestore(doc);
-    _userCache[uid] = user;
-    return user;
-  }
-
   Future<void> _prefetchUsers(List<String> uids) async {
     final missing = uids.where((id) => !_userCache.containsKey(id)).toList();
     if (missing.isEmpty) return;
@@ -826,9 +795,5 @@ class _ChatsListScreenState extends State<ChatsListScreen>
         ),
       ),
     );
-  }
-
-  int _getTotalUnreadCount() {
-    return 0;
   }
 }

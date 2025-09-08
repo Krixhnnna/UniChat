@@ -7,13 +7,15 @@ service cloud.firestore {
       allow read: if request.auth != null; // Allow reading other users for matching
     }
     
-    // Chats collection - simplified rules
+    // Chats collection - more permissive rules for testing
     match /chats/{chatId} {
       allow read, write: if request.auth != null;
       
-      // Messages subcollection - simplified rules
+      // Messages subcollection - more permissive rules
       match /messages/{messageId} {
         allow read, write: if request.auth != null;
+        // Allow read access to any authenticated user for debugging
+        allow read: if request.auth != null;
       }
     }
     
@@ -32,6 +34,16 @@ service cloud.firestore {
       allow read, write: if request.auth != null && 
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
       allow create: if request.auth != null;
+    }
+    
+    // Requests collection (for notifications/pings)
+    match /requests/{requestId} {
+      allow read, write: if request.auth != null;
+    }
+    
+    // Notifications collection
+    match /notifications/{notificationId} {
+      allow read, write: if request.auth != null;
     }
   }
 }

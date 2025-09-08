@@ -8,7 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:campus_crush/widgets/animated_background.dart';
 
 import 'package:image_picker/image_picker.dart';
-import 'package:firebase_storage/firebase_storage.dart';
+// import 'package:firebase_storage/firebase_storage.dart';  // Temporarily disabled
 import 'dart:io';
 // We are no longer using the 'image' package to avoid decoding errors.
 // import 'package:image/image.dart' as img;
@@ -105,26 +105,28 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         String fileExtension = image.path.split('.').last;
         String fileName =
             '${DateTime.now().millisecondsSinceEpoch}.$fileExtension';
-        Reference storageRef = FirebaseStorage.instance
-            .ref()
-            .child('profile_photos/${widget.currentUser.uid}/$fileName');
+        // Firebase Storage temporarily disabled
+        // Reference storageRef = FirebaseStorage.instance
+        //     .ref()
+        //     .child('profile_photos/${widget.currentUser.uid}/$fileName');
 
-        // Upload the file directly from its path.
-        final uploadTask = storageRef.putFile(
-          File(image.path),
-          SettableMetadata(contentType: 'image/jpeg'),
-        );
+        // // Upload the file directly from its path.
+        // final uploadTask = storageRef.putFile(
+        //   File(image.path),
+        //   SettableMetadata(contentType: 'image/jpeg'),
+        // );
 
-        uploadTask.snapshotEvents.listen((s) {
-          if (s.totalBytes > 0) {
-            setState(() {
-              _uploadProgress = s.bytesTransferred / s.totalBytes;
-            });
-          }
-        });
+        // uploadTask.snapshotEvents.listen((s) {
+        //   if (s.totalBytes > 0) {
+        //     setState(() {
+        //       _uploadProgress = s.bytesTransferred / s.totalBytes;
+        //     });
+        //   }
+        // });
 
-        final TaskSnapshot snapshot = await uploadTask;
-        String downloadUrl = await snapshot.ref.getDownloadURL();
+        // final TaskSnapshot snapshot = await uploadTask;
+        // String downloadUrl = await snapshot.ref.getDownloadURL();
+        String downloadUrl = image.path; // Temporarily use local path
 
         setState(() {
           if (_profilePhotos.isNotEmpty) {

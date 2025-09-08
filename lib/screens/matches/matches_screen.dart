@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:campus_crush/widgets/verification_badge.dart';
 import 'package:campus_crush/utils/user_verification.dart';
+import '../chat/chat_screen.dart';
 
 class MatchesScreen extends StatefulWidget {
   @override
@@ -150,7 +151,12 @@ class _MatchesScreenState extends State<MatchesScreen>
         final match = matches[index];
         return GestureDetector(
           onTap: () {
-            Navigator.pushNamed(context, '/chat', arguments: match);
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => ChatScreen(otherUser: match),
+              ),
+            );
           },
           child: Card(
             elevation: 5,

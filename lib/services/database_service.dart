@@ -62,6 +62,78 @@ class DatabaseService {
         .toList());
   }
 
+  // Send image message
+  Future<void> sendImageMessage(
+    String senderId,
+    String recipientId,
+    String imageUrl, {
+    String? replyToMessageId,
+    String? replyToContent,
+    String? replyToSenderId,
+  }) async {
+    final List<String> userIds = [senderId, recipientId]..sort();
+    final String chatId = userIds.join('_');
+
+    final DocumentReference chatRef =
+        _firestore.collection('chats').doc(chatId);
+    final CollectionReference messagesRef = chatRef.collection('messages');
+
+    // 1) Ensure chat doc exists/updated first
+    await _firestore.runTransaction((transaction) async {
+      final chatDoc = await transaction.get(chatRef);
+
+      Map<String, dynamic> chatData = {};
+      Map<String, dynamic> unreadCounts = {};
+
+      if (chatDoc.exists) {
+        chatData = chatDoc.data() as Map<String, dynamic>;
+        unreadCounts =
+            Map<String, dynamic>.from(chatData['unreadCounts'] ?? {});
+      }
+
+      // Update unread counts properly
+      unreadCounts[senderId] = 0; // Sender always has 0 unread
+      unreadCounts[recipientId] =
+          (unreadCounts[recipientId] ?? 0) + 1; // Increment recipient count
+
+      final updatedChatData = {
+        'participants': userIds,
+        'lastMessage': '📷 Image',
+        'lastMessageTime': FieldValue.serverTimestamp(),
+        'unreadCounts': unreadCounts,
+      };
+
+      if (chatDoc.exists) {
+        transaction.update(chatRef, updatedChatData);
+      } else {
+        transaction.set(chatRef, updatedChatData);
+      }
+    });
+
+    // 2) Then write the message doc
+    final messageData = {
+      'senderId': senderId,
+      'content': '',
+      'timestamp': FieldValue.serverTimestamp(),
+      'isRead': false,
+      'imageUrl': imageUrl,
+    };
+
+    // Add reply fields if this is a reply
+    if (replyToMessageId != null) {
+      messageData['replyToMessageId'] = replyToMessageId;
+      if (replyToContent != null)
+        messageData['replyToContent'] = replyToContent;
+      if (replyToSenderId != null)
+        messageData['replyToSenderId'] = replyToSenderId;
+    }
+
+    await messagesRef.add(messageData);
+
+    // Clear cache for this chat
+    _chatCache.remove(chatId);
+  }
+
   // sendMessage in two steps so Firestore rules can validate against chat doc that already exists
   Future<void> sendMessage(
     String senderId,
@@ -123,8 +195,10 @@ class DatabaseService {
     // Add reply fields if this is a reply
     if (replyToMessageId != null) {
       messageData['replyToMessageId'] = replyToMessageId;
-      messageData['replyToContent'] = replyToContent;
-      messageData['replyToSenderId'] = replyToSenderId;
+      if (replyToContent != null)
+        messageData['replyToContent'] = replyToContent;
+      if (replyToSenderId != null)
+        messageData['replyToSenderId'] = replyToSenderId;
     }
 
     await messagesRef.add(messageData);
